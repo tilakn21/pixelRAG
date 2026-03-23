@@ -108,7 +108,8 @@ with st.sidebar:
         nav_pages = {
             "🏠 Home / Sync": "home",
             "🔍 Search": "search",
-            "🏷️ Name Clusters": "name_clusters",
+            "📷 Browse": "browse",
+            "🏷️ Identity Manager": "name_clusters",
         }
         for label, page_key in nav_pages.items():
             if st.button(label, use_container_width=True, key=f"nav_{page_key}"):
@@ -152,15 +153,19 @@ else:
     page = st.session_state["page"]
 
     if page == "home":
-        from pixel_rag_core.ui.pages import home
+        from pixel_rag_core.ui.views import home
         home.render(active)
 
     elif page == "search":
-        from pixel_rag_core.ui.pages import search
+        from pixel_rag_core.ui.views import search
         search.render(active)
 
+    elif page == "browse":
+        from pixel_rag_core.ui.views import browse_categories
+        browse_categories.render(active)
+
     elif page == "name_clusters":
-        from pixel_rag_core.ui.pages import name_clusters
+        from pixel_rag_core.ui.views import name_clusters
         name_clusters.render(active)
 
     else:

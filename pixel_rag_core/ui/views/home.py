@@ -23,8 +23,9 @@ PIPELINE_STEPS = {
     "scan": "🔍 Scanning Photos",
     "metadata": "📅 Extracting Metadata",
     "geocode": "📍 Reverse Geocoding",
-    "faces": "👤 Detecting Faces",
-    "cluster": "🧬 Clustering Identities",
+    "faces": "👤 Detecting Faces (with quality gates)",
+    "scenes": "🏷️ Classifying Scenes (CLIP)",
+    "cluster": "🧬 Clustering Identities (HDBSCAN)",
     "done": "✅ Complete",
 }
 
@@ -61,6 +62,9 @@ def _run_first_open(folder_path: str, db_path: str):
         with log_area:
             st.caption(message)
 
+    # Wait a moment for any final DB locks from the pipeline to clear
+    time.sleep(2)
+
     # Mark all files as indexed for future sync
     from pixel_rag_core.library.sync import get_folder_files
     all_files = [p for p, _ in get_folder_files(folder_path)]
@@ -69,9 +73,15 @@ def _run_first_open(folder_path: str, db_path: str):
     progress_bar.progress(100)
     status_area.success("🎉 Library indexed successfully!")
 
-    if st.button("Go to Name Clusters →", use_container_width=True):
-        st.session_state["page"] = "name_clusters"
-        st.rerun()
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🏷️ Name Faces →", use_container_width=True, type="primary"):
+            st.session_state["page"] = "name_clusters"
+            st.rerun()
+    with col2:
+        if st.button("📷 Browse Categories →", use_container_width=True):
+            st.session_state["page"] = "browse"
+            st.rerun()
 
 
 def _run_incremental_sync(folder_path: str, db_path: str):
@@ -80,15 +90,20 @@ def _run_incremental_sync(folder_path: str, db_path: str):
 
     if total_changes == 0:
         st.success(f"✅ Library is up to date. No changes detected.")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("🔍 Search Photos", use_container_width=True):
                 st.session_state["page"] = "search"
                 st.rerun()
         with col2:
-            if st.button("🏷️ Name Clusters", use_container_width=True):
+            if st.button("📷 Browse", use_container_width=True):
+                st.session_state["page"] = "browse"
+                st.rerun()
+        with col3:
+            if st.button("🏷️ Identity Manager", use_container_width=True):
                 st.session_state["page"] = "name_clusters"
                 st.rerun()
+        _render_advanced_settings(folder_path, db_path)
         return
 
     st.subheader("🔄 Sync Required")
@@ -106,6 +121,7 @@ def _run_incremental_sync(folder_path: str, db_path: str):
             from pixel_rag_core.indexing.metadata_extractor import enrich_photos_metadata
             from pixel_rag_core.faces.face_indexer import index_faces_for_photos
             from pixel_rag_core.faces.cluster_faces import cluster_all_faces
+            from pixel_rag_core.indexing.scene_classifier import classify_untagged_photos
 
             # Handle deletions
             if deleted_files:
@@ -117,6 +133,7 @@ def _run_incremental_sync(folder_path: str, db_path: str):
                 scan_and_index_photos(folder_path, db_path)
                 enrich_photos_metadata(db_path)
                 index_faces_for_photos(db_path)
+                classify_untagged_photos(db_path)
                 cluster_all_faces(db_path)
                 mark_files_indexed(db_path, new_files + modified_files, folder_path)
 
@@ -124,3 +141,32 @@ def _run_incremental_sync(folder_path: str, db_path: str):
         if st.button("Go to Search →", use_container_width=True):
             st.session_state["page"] = "search"
             st.rerun()
+
+    _render_advanced_settings(folder_path, db_path)
+
+
+def _render_advanced_settings(folder_path: str, db_path: str):
+    st.markdown("---")
+    with st.expander("⚙️ Advanced Settings / Testing"):
+        st.warning("These actions are destructive and intended for testing/debugging.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🗑️ Reset Entire Library Index", use_container_width=True, help="Wipes all indexed data. The next run will index everything from scratch."):
+                from pixel_rag_core.scripts.reset_db import reset_db
+                import time
+                with st.spinner("Wiping library database..."):
+                    reset_db(Path(db_path), full_reset=True)
+                    time.sleep(1)
+                st.success("Library has been reset.")
+                st.rerun()
+                
+        with col2:
+            if st.button("🔄 Reset Face Clusters Only", use_container_width=True, help="Removes clusters and identities, but keeps photos and faces indexed."):
+                from pixel_rag_core.scripts.reset_db import reset_db
+                import time
+                with st.spinner("Deleting face clusters..."):
+                    reset_db(Path(db_path), full_reset=False)
+                    time.sleep(1)
+                st.success("Face clusters have been reset. Re-run sync to cluster again.")
+                st.rerun()

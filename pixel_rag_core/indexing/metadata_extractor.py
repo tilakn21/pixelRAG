@@ -170,7 +170,8 @@ def enrich_photos_metadata(db_path: str, limit: Optional[int] = None) -> int:
     :return: number of rows updated
     """
     db_path = Path(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
     cur = conn.cursor()
 
     # Select photos where created_at is NULL; you can extend this condition later

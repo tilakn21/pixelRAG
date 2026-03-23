@@ -14,13 +14,13 @@ def reset_db(db_path: Path, full_reset: bool):
     try:
         if full_reset:
             print("Performing FULL reset (deleting all photos, faces, embeddings, and clusters)...")
-            cur.executescript("""
-                DELETE FROM face_embeddings;
-                DELETE FROM faces;
-                DELETE FROM photos;
-                DELETE FROM clusters;
-                DELETE FROM people;
-            """)
+            # Use execute instead of executescript for individual deletes so we can catch missing tables
+            tables = ['face_embeddings', 'faces', 'photos', 'clusters', 'people', 'indexed_files', 'geocache']
+            for table in tables:
+                try:
+                    cur.execute(f"DELETE FROM {table}")
+                except sqlite3.OperationalError:
+                    pass
         else:
             print("Performing CLUSTER reset (unassigning all faces, deleting clusters and people)...")
             cur.executescript("""
@@ -29,8 +29,11 @@ def reset_db(db_path: Path, full_reset: bool):
                 DELETE FROM people;
             """)
         
-        cur.execute("VACUUM")
         conn.commit()
+        # VACUUM must be run outside of a transaction
+        conn.isolation_level = None
+        cur.execute("VACUUM")
+        conn.isolation_level = "" # restore default
         print("Database reset successfully.")
     except sqlite3.OperationalError as e:
         print(f"Error: {e}")

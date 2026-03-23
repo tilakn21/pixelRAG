@@ -14,6 +14,32 @@ if str(PROJECT_ROOT) not in sys.path:
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderUnavailable
 
+
+def _check_geocache(conn: sqlite3.Connection, lat: float, lon: float):
+    """Check if coordinates (rounded to 3 decimals) are in the geocache."""
+    lat_r = round(lat, 3)
+    lon_r = round(lon, 3)
+    row = conn.execute(
+        "SELECT city, state, country FROM geocache WHERE lat_rounded = ? AND lon_rounded = ?",
+        (lat_r, lon_r)
+    ).fetchone()
+    if row:
+        return row[0], row[1], row[2]
+    return None
+
+
+def _store_geocache(conn: sqlite3.Connection, lat: float, lon: float,
+                    city: Optional[str], state: Optional[str], country: Optional[str]):
+    """Store geocoding result in cache, rounded to 3 decimal places."""
+    lat_r = round(lat, 3)
+    lon_r = round(lon, 3)
+    conn.execute(
+        """INSERT OR REPLACE INTO geocache (lat_rounded, lon_rounded, city, state, country, resolved_at)
+           VALUES (?, ?, ?, ?, ?, CAST(strftime('%s', 'now') AS INTEGER))""",
+        (lat_r, lon_r, city, state, country)
+    )
+
+
 def get_location_details(lat: float, lon: float) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Reverse geocode a latitude and longitude into City, State, and Country.
@@ -58,10 +84,25 @@ def get_location_details(lat: float, lon: float) -> tuple[Optional[str], Optiona
 def enrich_photos_with_location(db_path: str, limit: Optional[int] = None) -> int:
     """
     Find photos with coordinates but no city/state/country, and reverse geocode them.
+    Uses a geocache to avoid redundant API calls for nearby locations.
     """
     db_path = Path(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
     cur = conn.cursor()
+
+    # Ensure geocache table exists
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS geocache (
+            lat_rounded  REAL NOT NULL,
+            lon_rounded  REAL NOT NULL,
+            city         TEXT,
+            state        TEXT,
+            country      TEXT,
+            resolved_at  INTEGER,
+            PRIMARY KEY (lat_rounded, lon_rounded)
+        )
+    """)
 
     # Find photos that have a location but haven't been reverse-geocoded yet
     query = """
@@ -87,8 +128,23 @@ def enrich_photos_with_location(db_path: str, limit: Optional[int] = None) -> in
     updated_count = 0
 
     for photo_id, lat, lon in rows:
-        city, state, country = get_location_details(lat, lon)
-        
+        city = state = country = None
+
+        # Check geocache first
+        cached = _check_geocache(conn, lat, lon)
+        if cached is not None:
+            city, state, country = cached
+        else:
+            # Live API call
+            city, state, country = get_location_details(lat, lon)
+
+            # Store in geocache regardless of result
+            _store_geocache(conn, lat, lon, city, state, country)
+            conn.commit()
+
+            # Rate limiting: 1.1 seconds between live API calls
+            time.sleep(1.1)
+
         if city or state or country:
             cur.execute(
                 """
@@ -99,9 +155,6 @@ def enrich_photos_with_location(db_path: str, limit: Optional[int] = None) -> in
                 (city, state, country, photo_id)
             )
             updated_count += 1
-            
-            # Respect Nominatim API usage policy (1 request per second absolute max)
-            time.sleep(1.1)
         else:
             # Mark as attempted by setting empty strings so we don't infinitely retry
             cur.execute(

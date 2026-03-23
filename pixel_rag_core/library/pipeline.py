@@ -1,7 +1,7 @@
 # pixel_rag_core/library/pipeline.py
 """
 Orchestrates the full ingestion pipeline for a new library folder:
-  scan → metadata → reverse geocode → face indexing → clustering
+  scan → metadata → reverse geocode → face indexing → scene classification → clustering
 
 All functions are thin wrappers around existing logic - nothing new is created here.
 Yields (step_name, status) tuples for UI live-progress display.
@@ -28,6 +28,7 @@ def run_full_pipeline(
     from pixel_rag_core.indexing.reverse_geocode import enrich_photos_with_location
     from pixel_rag_core.faces.face_indexer import index_faces_for_photos
     from pixel_rag_core.faces.cluster_faces import cluster_all_faces
+    from pixel_rag_core.indexing.scene_classifier import classify_untagged_photos
 
     # Step 1: Scan
     yield ("scan", "Scanning folder for photos...")
@@ -57,20 +58,28 @@ def run_full_pipeline(
     except Exception as e:
         yield ("geocode", f"⚠️ Geocoding skipped: {e}")
 
-    # Step 4: Face indexing
-    yield ("faces", "Detecting and embedding faces...")
+    # Step 4: Face indexing (with quality gates + pHash dedup)
+    yield ("faces", "Detecting and embedding faces (with quality filters)...")
     try:
         indexed = index_faces_for_photos(db_path)
-        yield ("faces", f"✅ Indexed faces for {indexed} photos.")
+        yield ("faces", f"✅ Indexed {indexed} faces.")
     except Exception as e:
         yield ("faces", f"❌ Face indexing failed: {e}")
         return
 
-    # Step 5: Clustering
-    yield ("cluster", "Clustering faces into identities...")
+    # Step 5: Scene classification (CLIP for non-face photos)
+    yield ("scenes", "Classifying non-face photos with CLIP...")
+    try:
+        classified = classify_untagged_photos(db_path)
+        yield ("scenes", f"✅ Classified {classified} photos into categories.")
+    except Exception as e:
+        yield ("scenes", f"⚠️ Scene classification skipped: {e}")
+
+    # Step 6: Clustering (HDBSCAN + purity scoring)
+    yield ("cluster", "Clustering faces into identities (HDBSCAN)...")
     try:
         result = cluster_all_faces(db_path)
-        n_clusters = result.get("clusters_created", 0) + result.get("clusters_merged", 0)
+        n_clusters = result.get("clusters_created", 0)
         yield ("cluster", f"✅ Created {n_clusters} identity clusters.")
     except Exception as e:
         yield ("cluster", f"❌ Clustering failed: {e}")

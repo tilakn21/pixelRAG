@@ -21,13 +21,14 @@ from pixel_rag_core.query_engine import GraphQueryEngine
 
 @st.cache_resource
 def get_engine(db_path: str) -> GraphQueryEngine:
+    # Set timeout on engine initialization as well
     return GraphQueryEngine(db_path=db_path)
 
 
 def render(library: dict):
-    from pixel_rag_core.library.library_manager import get_library_db
+    from pixel_rag_core.library.library_manager import ensure_library_db
 
-    db_path = str(get_library_db(library["path"]))
+    db_path = str(ensure_library_db(library["path"]))
 
     st.title("🔍 Search Photos")
     st.caption(f"Library: **{library['name']}** · `{library['path']}`")
@@ -46,10 +47,13 @@ def render(library: dict):
 
         paths = results.get("paths", [])
         parsed = results.get("parsed", {})
+        error = results.get("error")
 
         col_info, col_exp = st.columns([3, 1])
         with col_info:
-            if paths:
+            if error:
+                st.warning(f"⚠️ {error}")
+            elif paths:
                 st.success(f"Found **{len(paths)}** matching photos.")
             else:
                 st.warning("No photos found for this query.")
@@ -97,7 +101,8 @@ def _show_recent_photos(db_path: str):
 
     st.subheader("🕐 Recent Photos")
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
         rows = conn.execute(
             "SELECT path FROM photos ORDER BY id DESC LIMIT 12"
         ).fetchall()

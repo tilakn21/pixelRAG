@@ -15,7 +15,7 @@ from pixel_rag_core.config import DB_PATH
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Cluster face embeddings incrementally using vector search."
+        description="Cluster face embeddings using HDBSCAN."
     )
     parser.add_argument(
         "--db",
@@ -23,16 +23,16 @@ def main():
         help=f"Path to SQLite DB (default: {DB_PATH})",
     )
     parser.add_argument(
-        "--max_distance",
-        type=float,
-        default=0.45,
-        help="Maximum Cosine Distance for faces to match. Lower = more strict.",
-    )
-    parser.add_argument(
-        "--min_faces",
+        "--min_cluster_size",
         type=int,
         default=3,
-        help="Minimum faces required to form a new core group cluster.",
+        help="Minimum faces to form a cluster (default: 3).",
+    )
+    parser.add_argument(
+        "--min_samples",
+        type=int,
+        default=2,
+        help="HDBSCAN min_samples parameter (default: 2).",
     )
 
     args = parser.parse_args()
@@ -44,8 +44,8 @@ def main():
 
     summary = cluster_all_faces(
         str(db_path),
-        max_distance=args.max_distance,
-        min_faces=args.min_faces,
+        min_cluster_size=args.min_cluster_size,
+        min_samples=args.min_samples,
     )
 
     print(f"[PixelRAG] Clustering finished: {summary}")

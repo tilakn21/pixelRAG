@@ -19,9 +19,11 @@ if str(PROJECT_ROOT) not in sys.path:
 PIXELRAG_CONFIG_DIR = Path.home() / ".pixelrag"
 LIBRARIES_FILE = PIXELRAG_CONFIG_DIR / "libraries.json"
 
-# Per-library hidden dir name
 LIBRARY_DIR_NAME = ".pixelrag"
 LIBRARY_DB_NAME = "db.sqlite"
+
+# In-memory cache to prevent Streamlit background reruns from hammering DDL schema locks
+_MIGRATED_DBS = set()
 
 
 def _load_libraries() -> List[dict]:
@@ -87,11 +89,24 @@ def get_library_db(folder_path: str) -> Path:
 
 
 def ensure_library_db(folder_path: str) -> Path:
-    """Initializes the DB for a library if it doesn't exist. Returns DB path."""
-    from pixel_rag_core.db.init_db import init_db
+    """Initializes the DB for a library if it doesn't exist.
+    Also runs migrations on existing DBs to add new columns.
+    Returns DB path."""
+    from pixel_rag_core.db.init_db import init_db, run_migrations
+    import sqlite3
 
     db_path = get_library_db(folder_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if not db_path.exists():
         init_db(str(db_path))
+        _MIGRATED_DBS.add(str(db_path))
+    else:
+        # Run migrations on existing DB to add any new columns/tables
+        if str(db_path) not in _MIGRATED_DBS:
+            conn = sqlite3.connect(db_path, timeout=30)
+            conn.execute("PRAGMA journal_mode=WAL")
+            run_migrations(conn)
+            conn.close()
+            _MIGRATED_DBS.add(str(db_path))
     return db_path
+

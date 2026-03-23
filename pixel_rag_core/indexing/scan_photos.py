@@ -29,7 +29,8 @@ def scan_and_index_photos(root_dir: str, db_path: str) -> int:
         raise FileNotFoundError(f"Root directory does not exist: {root}")
 
     db_path = Path(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
     cur = conn.cursor()
 
     inserted = 0

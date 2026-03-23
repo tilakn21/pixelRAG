@@ -158,3 +158,13 @@ wcwidth==0.6.0
 websockets==16.0
 wheel==0.45.1
 zstandard @ file:///opt/miniconda3/conda-bld/zstandard_1758189078532/work
+ImageHash==4.3.2
+hdbscan==0.8.41
+open-clip-torch==3.3.0
+rapidfuzz==3.14.3
+
+ImageHash==4.3.2
+hdbscan==0.8.41
+open-clip-torch==3.3.0
+rapidfuzz==3.14.3
+
