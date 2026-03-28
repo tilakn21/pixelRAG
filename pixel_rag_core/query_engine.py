@@ -107,7 +107,7 @@ class GraphQueryEngine:
         - location: A string representing a city, state, or country. Empty string if none.
         - scene_category: One of the following valid categories ONLY: {categories_str}. Set to null if the user does not mention a photo type. "people" is for photos of people/faces.
         - strict: Boolean. True if the query implies ALL people must be in the photo (e.g., "tilak and alice put together", "photos of tilak and alice"). False if ANY ("tilak or alice"). Default to True for a single person or if ambiguous.
-        - exclusive: Boolean. True if the user explicitly mentions "only", "just", "nobody else", or "exclusively these people". Default to False.
+        - exclusive: Boolean. True if the user explicitly mentions "only", "just", "alone", "nobody else", or "by himself/herself". Default to False.
 
         IMPORTANT RULES:
         - For scene_category, use ONLY the exact category names listed above. Do NOT invent new categories.
@@ -157,7 +157,7 @@ class GraphQueryEngine:
                   category: str = "") -> Dict[str, Any]:
         """Builds a SQL query deterministically from extracted parameters."""
 
-        base_query = "SELECT p.path FROM photos p"
+        base_query = "SELECT p.* FROM photos p"
         where_clauses = []
         params = []
 
@@ -210,10 +210,11 @@ class GraphQueryEngine:
                     )
                 """)
 
-            # Exclusivity check: no other CONFIRMED named person present
+            # Exclusivity check: absolute purity (no other face present, named or unnamed)
             if exclusive:
-                # Build exclusion: exclude photos that have a confirmed named person
-                # who is NOT in the requested names list
+                # Build exclusion: exclude photos that have ANY face that is either:
+                # 1) unassigned/unconfirmed (ppl2.id IS NULL or cluster)
+                # 2) a confirmed person who is NOT in the requested names list
                 name_exclusions = []
                 for name in names:
                     name_exclusions.append("ppl2.name LIKE ? COLLATE NOCASE")
@@ -223,10 +224,10 @@ class GraphQueryEngine:
                 where_clauses.append(f"""
                     p.id NOT IN (
                         SELECT f2.photo_id FROM faces f2
-                        JOIN people ppl2 ON f2.person_id = ppl2.id
-                        WHERE ppl2.name NOT LIKE 'Cluster_%'
-                          AND ppl2.name != 'Unknown'
-                          AND NOT ({exclusion_or})
+                        LEFT JOIN people ppl2 ON f2.person_id = ppl2.id
+                        WHERE ppl2.id IS NULL 
+                           OR ppl2.name LIKE 'Cluster_%'
+                           OR NOT ({exclusion_or})
                     )
                 """)
 
@@ -237,20 +238,21 @@ class GraphQueryEngine:
         explanation = f"Searching for: Names={names}, Date='{date}', Location='{location}', SceneCategory='{scene_category}', Strict={strict}, Exclusive={exclusive}"
         return {"sql": query, "params": params, "explanation": explanation}
 
-    def execute_query(self, sql: str, params: List[Any]) -> List[str]:
-        """Executes the raw SQL query to fetch photo paths."""
+    def execute_query(self, sql: str, params: List[Any]) -> List[Dict[str, Any]]:
+        """Executes the raw SQL query to fetch photo records."""
         if not sql:
             return []
 
         try:
             conn = sqlite3.connect(self.db_path, timeout=30)
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.row_factory = sqlite3.Row
             cur = conn.cursor()
             cur.execute(sql, params)
             rows = cur.fetchall()
             conn.close()
 
-            return [row[0] for row in rows]
+            return [dict(row) for row in rows]
         except sqlite3.Error as e:
             print(f"[PixelRAG] SQLite Execution Error: {e}\nQuery was: {sql}\nParams: {params}")
             return []
@@ -296,16 +298,22 @@ class GraphQueryEngine:
         print(f"Generated SQL: {sql}\nParams: {params}\n")
 
         # 4. Execute
-        paths = self.execute_query(sql, params)
-        print(f"Found {len(paths)} matching photos.")
+        photos = self.execute_query(sql, params)
+        print(f"Found {len(photos)} matching photos.")
 
         return {
             "prompt": prompt,
-            "parsed": parsed,
+            "intent": parsed,
             "sql": sql,
             "params": params,
-            "paths": paths
+            "photos": photos
         }
+
+
+def search(db_path: str, query: str) -> Dict[str, Any]:
+    """Top-level search entry point for the FastAPI server."""
+    engine = GraphQueryEngine(db_path=db_path)
+    return engine.run_prompt(query)
 
 if __name__ == "__main__":
     import argparse
@@ -327,9 +335,9 @@ if __name__ == "__main__":
 
     if results.get("error"):
         print(f"\n⚠️ {results['error']}")
-    elif results.get("paths"):
-        print("\nResult Paths:")
-        for p in results["paths"][:10]:  # Print top 10
-            print(f" - {p}")
-        if len(results["paths"]) > 10:
-            print(f" ... and {len(results['paths']) - 10} more.")
+    elif results.get("photos"):
+        print("\nResult Photos:")
+        for p in results["photos"][:10]:  # Print top 10
+            print(f" - {p['path']}")
+        if len(results["photos"]) > 10:
+            print(f" ... and {len(results['photos']) - 10} more.")

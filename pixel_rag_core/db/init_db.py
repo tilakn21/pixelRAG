@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS faces (
     embedding_idx  INTEGER,
     cluster_id     INTEGER,
     person_id      INTEGER,
+    is_representative INTEGER DEFAULT 0,
     FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE,
     FOREIGN KEY(person_id) REFERENCES people(id)
 );
@@ -107,6 +108,9 @@ def run_migrations(conn: sqlite3.Connection):
     _safe_add_column(conn, "photos", "scene_tags", "TEXT")
     _safe_add_column(conn, "photos", "scene_low_confidence", "INTEGER", default=0)
     _safe_add_column(conn, "photos", "file_hash", "TEXT")
+
+    # ── faces table additions ─────────────────────────────────────────
+    _safe_add_column(conn, "faces", "is_representative", "INTEGER", default=0)
 
     # ── people table additions ────────────────────────────────────────
     _safe_add_column(conn, "people", "centroid_embedding", "BLOB")

@@ -250,9 +250,36 @@ def index_faces_for_photos(
                 print(f"[PixelRAG] Worker error for {path}: {e}")
                 results[photo_id] = []
 
-    # ── Single-threaded DB write phase ────────────────────────────────────
+    # ── Single-threaded DB write & Auto-Tagging phase ─────────────────────
+    print("[PixelRAG] Loading Identity Gallery for Auto-Tagging...")
     conn = sqlite3.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    
+    gallery_rows = conn.execute(
+        """
+        SELECT f.person_id, fe.embedding
+        FROM faces f
+        JOIN face_embeddings fe ON f.id = fe.face_id
+        JOIN people p ON f.person_id = p.id
+        WHERE f.is_representative = 1 AND p.confirmed = 1
+        """
+    ).fetchall()
+    
+    gallery_person_ids = []
+    gallery_embeddings = []
+    for pid, emb_blob in gallery_rows:
+        gallery_person_ids.append(pid)
+        emb_arr = np.frombuffer(emb_blob, dtype=np.float64)
+        gallery_embeddings.append(emb_arr)
+        
+    gallery_person_ids = np.array(gallery_person_ids) if gallery_person_ids else np.array([])
+    if len(gallery_embeddings) > 0:
+        gallery_embeddings = np.array(gallery_embeddings)
+        norms = np.linalg.norm(gallery_embeddings, axis=1, keepdims=True)
+        gallery_embeddings = gallery_embeddings / (norms + 1e-10)
+    else:
+        gallery_embeddings = np.array([])
+
     total_faces = 0
 
     for photo_id, path in photos_to_process:
@@ -263,10 +290,18 @@ def index_faces_for_photos(
             continue
 
         for bbox_x1, bbox_y1, bbox_x2, bbox_y2, emb in faces:
+            assigned_person_id = None
+            if len(gallery_embeddings) > 0:
+                emb_norm = emb / (np.linalg.norm(emb) + 1e-10)
+                sims = gallery_embeddings @ emb_norm
+                max_sim_idx = np.argmax(sims)
+                if sims[max_sim_idx] > 0.65:  # Strict threshold for absolute reliability
+                    assigned_person_id = int(gallery_person_ids[max_sim_idx])
+
             conn.execute(
-                "INSERT INTO faces (photo_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (photo_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2),
+                "INSERT INTO faces (photo_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, person_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (photo_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, assigned_person_id),
             )
             face_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 

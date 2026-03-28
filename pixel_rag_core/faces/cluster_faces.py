@@ -47,38 +47,100 @@ def _load_face_data(db_path: Path) -> Tuple[np.ndarray, List[int], List[int], Li
     return X, face_ids, cluster_ids, person_ids
 
 
-def _compute_purity_score(embeddings: np.ndarray) -> float:
+def update_person_profile(conn: sqlite3.Connection, person_id: int):
     """
-    Compute intra-cluster purity as mean off-diagonal cosine similarity.
-    Embeddings should be L2-normalized.
+    Recompute centroid embedding and purity score for a person,
+    scrub outliers (distance > threshold), and set gallery representatives.
     """
-    if len(embeddings) < 2:
-        return 1.0
+    rows = conn.execute(
+        """
+        SELECT f.id, fe.embedding
+        FROM face_embeddings fe
+        JOIN faces f ON fe.face_id = f.id
+        WHERE f.person_id = ? OR f.cluster_id IN (SELECT id FROM clusters WHERE person_id = ?)
+        """,
+        (person_id, person_id),
+    ).fetchall()
 
-    # Normalize
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    normed = embeddings / (norms + 1e-10)
+    if not rows:
+        return
 
-    # Full pairwise cosine similarity via matrix multiplication
-    sim_matrix = normed @ normed.T
+    face_ids = []
+    embeddings = []
+    for row in rows:
+        face_ids.append(row[0])
+        embeddings.append(np.frombuffer(row[1], dtype=np.float64))
 
-    # mean of off-diagonal values
-    n = len(embeddings)
-    # Sum all, subtract diagonal (which is n * 1.0), divide by n*(n-1)
-    total = sim_matrix.sum() - np.trace(sim_matrix)
-    count = n * (n - 1)
-    if count == 0:
-        return 1.0
-    return float(total / count)
+    face_ids = np.array(face_ids)
+    X = np.array(embeddings)
+    norms = np.linalg.norm(X, axis=1, keepdims=True)
+    X_norm = X / (norms + 1e-10)
 
+    # Initial Centroid
+    centroid = X_norm.mean(axis=0)
+    centroid = centroid / (np.linalg.norm(centroid) + 1e-10)
 
-def _compute_centroid(embeddings: np.ndarray) -> np.ndarray:
-    """Compute L2-normalized mean embedding centroid."""
-    mean = embeddings.mean(axis=0)
-    norm = np.linalg.norm(mean)
-    if norm > 0:
-        mean = mean / norm
-    return mean
+    # Scrubbing phase
+    sims = (X_norm @ centroid).flatten()
+    inlier_mask = sims >= 0.35
+
+    outlier_ids = face_ids[~inlier_mask]
+    if len(outlier_ids) > 0:
+        placeholders = ",".join("?" for _ in outlier_ids)
+        conn.execute(f"UPDATE faces SET person_id = NULL, cluster_id = NULL WHERE id IN ({placeholders})", outlier_ids.tolist())
+        
+        X_in = X_norm[inlier_mask]
+        face_ids_in = face_ids[inlier_mask]
+        
+        if len(X_in) == 0:
+            conn.execute("UPDATE people SET centroid_embedding = NULL, purity_score = 0 WHERE id = ?", (person_id,))
+            return
+            
+        centroid = X_in.mean(axis=0)
+        centroid = centroid / (np.linalg.norm(centroid) + 1e-10)
+    else:
+        X_in = X_norm
+        face_ids_in = face_ids
+
+    # Purity
+    if len(X_in) > 1:
+        sim_matrix = X_in @ X_in.T
+        n = len(X_in)
+        purity = float((sim_matrix.sum() - n) / (n * (n - 1)))
+    else:
+        purity = 1.0
+
+    # Gallery Selection
+    repr_ids = []
+    if len(X_in) <= 10:
+        repr_ids = face_ids_in.tolist()
+    else:
+        # Farthest Point Sampling
+        first_idx = int(np.argmax(X_in @ centroid))
+        repr_idx = [first_idx]
+        for _ in range(9):
+            selected_X = X_in[repr_idx]
+            dists = 1 - (X_in @ selected_X.T)
+            min_dists = dists.min(axis=1)
+            next_idx = int(np.argmax(min_dists))
+            repr_idx.append(next_idx)
+        repr_ids = [int(face_ids_in[i]) for i in repr_idx]
+
+    # Save
+    # We must explicitly find all face IDs linked to this person to reset representatives
+    conn.execute(
+        "UPDATE faces SET is_representative = 0 "
+        "WHERE person_id = ? OR cluster_id IN (SELECT id FROM clusters WHERE person_id = ?)",
+        (person_id, person_id)
+    )
+    if repr_ids:
+        placeholders = ",".join("?" for _ in repr_ids)
+        conn.execute(f"UPDATE faces SET is_representative = 1 WHERE id IN ({placeholders})", repr_ids)
+
+    conn.execute(
+        "UPDATE people SET centroid_embedding = ?, purity_score = ? WHERE id = ?",
+        (centroid.astype(np.float64).tobytes(), purity, person_id),
+    )
 
 
 def cluster_all_faces(
@@ -186,41 +248,25 @@ def cluster_all_faces(
 
         conn.commit()
 
-        # ── Compute centroids and purity scores ─────────────────────────────
-        print("[PixelRAG] Computing centroids and purity scores...")
+        # ── Compute centroids, purity, and gallery representations ──
+        print("[PixelRAG] Optimizing identities and building gallery...")
 
         for label, cluster_id in label_to_cluster_id.items():
-            # Get indices of faces in this cluster
             mask = labels == label
-            cluster_embeddings = X[mask]  # Use original float64 embeddings
-
-            if len(cluster_embeddings) < min_cluster_size:
+            if sum(mask) < min_cluster_size:
                 continue
 
-            # Compute centroid (L2-normalized mean)
-            centroid = _compute_centroid(cluster_embeddings)
-            centroid_blob = centroid.astype(np.float32).tobytes()
-
-            # Compute purity score
-            purity = float(_compute_purity_score(cluster_embeddings))
-
-            # Check if this cluster is linked to a person via the clusters table
             person_row = conn.execute(
                 "SELECT person_id FROM clusters WHERE id = ?", (cluster_id,)
             ).fetchone()
 
             if person_row and person_row[0] is not None:
-                # Update existing person
-                conn.execute(
-                    "UPDATE people SET centroid_embedding = ?, purity_score = ? WHERE id = ?",
-                    (centroid_blob, purity, int(person_row[0]))
-                )
+                person_id = int(person_row[0])
             else:
-                # Create a placeholder person for this unnamed cluster
                 cur = conn.execute(
-                    "INSERT OR IGNORE INTO people (name, centroid_embedding, purity_score, confirmed) "
-                    "VALUES (?, ?, ?, 0)",
-                    (f"Cluster_{cluster_id}", centroid_blob, purity),
+                    "INSERT OR IGNORE INTO people (name, confirmed) "
+                    "VALUES (?, 0)",
+                    (f"Cluster_{cluster_id}",),
                 )
                 if cur.lastrowid:
                     person_id = int(cur.lastrowid)
@@ -228,6 +274,11 @@ def cluster_all_faces(
                         "UPDATE clusters SET person_id = ? WHERE id = ?",
                         (person_id, cluster_id),
                     )
+                    
+            if 'person_id' in locals() and person_id is not None:
+                # Sync person_id directly for faces in this cluster to normalize schema
+                conn.execute("UPDATE faces SET person_id = ? WHERE cluster_id = ?", (person_id, cluster_id))
+                update_person_profile(conn, person_id)
 
         conn.commit()
 
