@@ -24,7 +24,15 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
 
   const isPaginated = !staticPhotos;
 
-  // Reset when category changes
+  // Sync state with staticPhotos prop (crucial for search updates)
+  useEffect(() => {
+    if (staticPhotos) {
+      setPhotos(staticPhotos);
+      setLightboxIdx(null); // Close lightbox if open on new search
+    }
+  }, [staticPhotos]);
+
+  // Reset when category changes (for paginated mode)
   useEffect(() => {
     if (isPaginated) {
       setPhotos([]);
