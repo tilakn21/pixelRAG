@@ -11,18 +11,20 @@ from pixel_rag_server.models.schemas import PaginatedPhotos, PhotoResponse
 router = APIRouter(tags=["photos"])
 
 
-def _get_person_ids_for_photo(conn: sqlite3.Connection, photo_id: int) -> list[int]:
-    """Get all confirmed person IDs linked to a photo via faces."""
+def _get_people_for_photo(conn: sqlite3.Connection, photo_id: int) -> tuple[list[int], list[str]]:
+    """Get all confirmed person IDs and names linked to a photo via faces."""
     rows = conn.execute(
         """
-        SELECT DISTINCT p.id
+        SELECT DISTINCT p.id, p.name
         FROM faces f
         JOIN people p ON f.person_id = p.id
         WHERE f.photo_id = ? AND p.confirmed = 1
         """,
         (photo_id,),
     ).fetchall()
-    return [r[0] for r in rows]
+    ids = [r[0] for r in rows]
+    names = [r[1] for r in rows]
+    return ids, names
 
 
 @router.get("/photos", response_model=PaginatedPhotos)
@@ -78,7 +80,7 @@ async def list_photos(
     offset = (page - 1) * page_size
     data_sql = f"""
         SELECT p.id, p.path, p.created_at, p.scene_category, p.scene_confidence,
-               p.city, p.state, p.country, p.has_faces
+               p.city, p.state, p.country, p.has_faces, p.camera_make, p.camera_model
         FROM photos p
         {where_sql}
         ORDER BY {sort_col} {sort_order.upper()} NULLS LAST
@@ -91,6 +93,8 @@ async def list_photos(
         photo_id_val = row["id"]
         path = row["path"]
         filename = path.rsplit("/", 1)[-1] if "/" in path else path
+        
+        person_ids, person_names = _get_people_for_photo(conn, photo_id_val)
 
         items.append(
             PhotoResponse(
@@ -104,7 +108,10 @@ async def list_photos(
                 state=row["state"],
                 country=row["country"],
                 has_faces=bool(row["has_faces"]),
-                person_ids=_get_person_ids_for_photo(conn, photo_id_val),
+                person_ids=person_ids,
+                person_names=person_names,
+                camera_make=row["camera_make"],
+                camera_model=row["camera_model"],
             )
         )
 

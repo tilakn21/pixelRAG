@@ -22,6 +22,9 @@ export interface Photo {
   country: string | null;
   has_faces: boolean;
   person_ids: number[];
+  person_names: string[];
+  camera_make: string | null;
+  camera_model: string | null;
 }
 
 export interface PaginatedPhotos {
@@ -66,6 +69,7 @@ export interface SyncStatus {
   photos_processed: number;
   photos_total: number;
   error_message: string | null;
+  logs: string[];
 }
 
 export interface SearchSuggestions {
@@ -78,4 +82,6 @@ export interface HealthResponse {
   photo_count: number;
   person_count: number;
   library_path: string;
+  known_libraries: string[];
+  lib_hash: string;
 }

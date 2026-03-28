@@ -72,16 +72,19 @@ export function fetchPhotos(params: {
 }
 
 // ── Media URL helpers (never scattered across components) ─────────────────────
-export function getThumbUrl(photoId: number, size: number = 400): string {
-  return `${API_URL}/api/media/thumb/${photoId}?size=${size}`;
+export function getThumbUrl(photoId: number, size: number = 400, libHash?: string): string {
+  const h = libHash ? `&h=${libHash}` : "";
+  return `${API_URL}/api/media/thumb/${photoId}?size=${size}${h}`;
 }
 
-export function getPhotoUrl(photoId: number): string {
-  return `${API_URL}/api/media/photo/${photoId}`;
+export function getPhotoUrl(photoId: number, libHash?: string): string {
+  const h = libHash ? `?h=${libHash}` : "";
+  return `${API_URL}/api/media/photo/${photoId}${h}`;
 }
 
-export function getFaceUrl(faceId: number): string {
-  return `${API_URL}/api/media/face/${faceId}`;
+export function getFaceUrl(faceId: number, libHash?: string): string {
+  const h = libHash ? `?h=${libHash}` : "";
+  return `${API_URL}/api/media/face/${faceId}${h}`;
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
@@ -176,10 +179,20 @@ export function fetchPersonFaces(
   );
 }
 
+export function deletePerson(personId: number): Promise<{ message: string; person_id: number }> {
+  return request<{ message: string; person_id: number }>(`/api/identities/${personId}`, {
+    method: "DELETE",
+  });
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 export function setLibraryPath(path: string): Promise<{ status: string; library_path: string; db_path: string }> {
   return request<{ status: string; library_path: string; db_path: string }>("/api/config/library", {
     method: "POST",
     body: JSON.stringify({ path }),
   });
+}
+
+export function fetchLibraries(): Promise<{ libraries: string[] }> {
+  return request<{ libraries: string[] }>("/api/config/libraries");
 }

@@ -10,11 +10,22 @@ import SearchBar from "@/components/SearchBar";
 export default function HomePage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSwitched, setIsSwitched] = useState(false);
   const [libraryInput, setLibraryInput] = useState("");
   const [setupSaving, setSetupSaving] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
+    // Check if we just swapped library
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("switched") === "true") {
+        setIsSwitched(true);
+        // Clear param without reload
+        window.history.replaceState({}, "", "/");
+      }
+    }
+
     fetchHealth()
       .then(setHealth)
       .catch(() => setError("Unable to connect to PixelRAG Backend. Ensure the FastAPI server is running."));
@@ -27,9 +38,9 @@ export default function HomePage() {
     setError(null);
     try {
       await setLibraryPath(libraryInput.trim());
-      const newHealth = await fetchHealth();
-      setHealth(newHealth);
-      setLibraryInput("");
+      // A hard reload is the safest way to clear all browser caches (lists, thumbs) 
+      // when the entire backend database context has swapped.
+      window.location.href = "/?switched=true";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to set library path");
     } finally {
@@ -42,6 +53,26 @@ export default function HomePage() {
   return (
     <div style={{ paddingTop: "var(--space-10)", paddingBottom: "var(--space-10)", maxWidth: 800, margin: "0 auto", textAlign: "center" }}>
       
+      {/* Success Notification */}
+      {isSwitched && (
+        <div style={{ 
+          margin: "0 auto var(--space-6)", maxWidth: 500, padding: "var(--space-4)", 
+          background: "var(--accent-glow)", border: "1px solid var(--accent-primary)",
+          borderRadius: "var(--radius-md)", color: "var(--accent-primary)", fontWeight: "bold",
+          display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: "var(--space-2)"
+        }}>
+          ✅ Library Updated! 
+          {health?.photo_count === 0 && (
+            <button 
+              onClick={() => router.push("/sync")} 
+              style={{ textDecoration: "underline", background: "none", border: "none", color: "inherit", cursor: "pointer", fontWeight: "inherit" }}
+            >
+               Run your first sync to index photos →
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Hero Section */}
       <h1 className="page-title" style={{ fontSize: "3rem", marginBottom: "var(--space-2)" }}>Your Life in Focus.</h1>
       <p className="page-subtitle" style={{ fontSize: "1.25rem", maxWidth: 500, margin: "0 auto var(--space-8)" }}>

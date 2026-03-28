@@ -9,9 +9,18 @@ router = APIRouter(tags=["config"])
 class LibrarySetupRequest(BaseModel):
     path: str
 
+@router.get("/config/libraries")
+async def list_known_libraries():
+    """List all previously added library folders."""
+    from pixel_rag_server.services.library_manager import get_known_libraries
+    return {"libraries": get_known_libraries()}
+
+
 @router.post("/config/library")
 async def set_library_path(request: Request, body: LibrarySetupRequest):
     """Set the library path, write to .env, and initialize the database."""
+    from pixel_rag_server.services.library_manager import add_known_library
+    
     lib_path = str(Path(body.path).resolve())
     
     if not Path(lib_path).is_dir():
@@ -30,17 +39,17 @@ async def set_library_path(request: Request, body: LibrarySetupRequest):
     env_content += f'LIBRARY_PATH="{lib_path}"\n'
     env_path.write_text(env_content)
     
+    # Add to persistent tracker
+    add_known_library(lib_path)
+    
     # Update app state
     request.app.state.library_path = lib_path
     db_path = str(Path(lib_path) / ".pixelrag" / "db.sqlite")
     request.app.state.db_path = db_path
     
-    # Initialize DB
+    # Initialize/Migrate DB
     from pixel_rag_core.db.init_db import init_db
-    db_dir = Path(db_path).parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    if not Path(db_path).exists():
-        init_db(db_path)
+    init_db(db_path)
         
     request.app.state.setup_required = False
     

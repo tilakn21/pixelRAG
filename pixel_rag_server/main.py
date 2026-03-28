@@ -35,11 +35,8 @@ async def lifespan(app: FastAPI):
     from pixel_rag_core.db.init_db import init_db
 
     if not SETUP_REQUIRED:
-        # Ensure the database exists
-        db_dir = Path(DB_PATH).parent
-        db_dir.mkdir(parents=True, exist_ok=True)
-        if not Path(DB_PATH).exists():
-            init_db(DB_PATH)
+        # Initialize or upgrade the database schema
+        init_db(DB_PATH)
         print(f"[PixelRAG Server] Library: {LIBRARY_PATH}")
         print(f"[PixelRAG Server] Database: {DB_PATH}")
 
@@ -89,12 +86,20 @@ async def health_check(request: Request):
     status = "ok"
     photo_count = 0
     person_count = 0
-    lib_path = ""
+    lib_hash = ""
+    known_libs = []
 
     if getattr(request.app.state, "setup_required", False) or not request.app.state.db_path:
         status = "setup_required"
     else:
+        from pixel_rag_server.services.library_manager import (
+            get_known_libraries,
+            get_path_hash,
+        )
+
         lib_path = request.app.state.library_path
+        lib_hash = get_path_hash(lib_path)
+        known_libs = get_known_libraries()
         try:
             conn = sqlite3.connect(request.app.state.db_path, timeout=10)
             conn.execute("PRAGMA journal_mode=WAL")
@@ -111,4 +116,6 @@ async def health_check(request: Request):
         photo_count=photo_count,
         person_count=person_count,
         library_path=lib_path,
+        known_libraries=known_libs,
+        lib_hash=lib_hash,
     )

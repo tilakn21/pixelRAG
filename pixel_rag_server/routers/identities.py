@@ -66,11 +66,15 @@ async def list_identities(
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
 
-    query = "SELECT p.* FROM people p"
+    query = """
+        SELECT p.* 
+        FROM people p
+        WHERE (p.confirmed = 1 OR (SELECT COUNT(*) FROM faces f WHERE f.person_id = p.id) >= 2)
+    """
     params: list = []
 
     if confirmed_only:
-        query += " WHERE p.confirmed = 1"
+        query += " AND p.confirmed = 1"
 
     # Order by face count descending
     query += """
@@ -123,6 +127,8 @@ async def rename_person(request: Request, person_id: int, body: RenameBody):
         "UPDATE people SET name = ?, confirmed = 1 WHERE id = ?",
         (body.name.strip(), person_id),
     )
+    # Recompute profile to pick a representative face for the search gallery
+    update_person_profile(conn, person_id)
     conn.commit()
 
     updated = conn.execute("SELECT * FROM people WHERE id = ?", (person_id,)).fetchone()
@@ -283,5 +289,37 @@ async def get_person_faces(request: Request, person_id: int):
     conn.close()
 
     return {"face_ids": [r[0] for r in rows]}
+
+
+@router.delete("/identities/{person_id}")
+async def delete_person(request: Request, person_id: int):
+    """
+    Dissolves a person cluster. 
+    Removes the person record and unlinks all associated faces (sets them back to NULL).
+    """
+    db_path = request.app.state.db_path
+
+    conn = sqlite3.connect(db_path, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    
+    # Check if exists
+    row = conn.execute("SELECT id FROM people WHERE id = ?", (person_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail={"error": "Person not found"})
+
+    try:
+        # 1. Unlink all faces
+        conn.execute("UPDATE faces SET person_id = NULL WHERE person_id = ?", (person_id,))
+        # 2. Delete person record
+        conn.execute("DELETE FROM people WHERE id = ?", (person_id,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise HTTPException(status_code=500, detail={"error": f"Failed to delete cluster: {e}"})
+
+    conn.close()
+    return {"message": "Cluster dissolved successfully", "person_id": person_id}
 
 

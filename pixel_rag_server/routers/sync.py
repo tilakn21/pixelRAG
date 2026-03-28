@@ -16,32 +16,44 @@ _sync_lock = threading.Lock()
 
 
 def _run_sync_pipeline(library_path: str, db_path: str):
-    """Run the full indexing pipeline in a background thread."""
+    """Run the full indexing pipeline in a background thread and track progress."""
     global _sync_state
 
-    try:
-        with _sync_lock:
-            _sync_state.status = "running"
-            _sync_state.progress = 0
-            _sync_state.error_message = None
+    # Step progress mapping for better UX
+    step_ranges = {
+        "scan": 15,
+        "metadata": 30,
+        "geocode": 40,
+        "faces": 70,
+        "scenes": 85,
+        "cluster": 95,
+        "done": 100,
+    }
 
+    try:
         from pixel_rag_core.library.pipeline import run_full_pipeline
 
-        # Run the pipeline — this is the heavy operation
-        _sync_state.progress = 10
-        _sync_state.current_file = "Scanning folder..."
-
-        run_full_pipeline(library_path, db_path)
-
-        with _sync_lock:
-            _sync_state.status = "complete"
-            _sync_state.progress = 100
-            _sync_state.current_file = None
+        # Use the generator to track each stage of the AI pipeline
+        for step_name, msg in run_full_pipeline(library_path, db_path):
+            with _sync_lock:
+                # Add to log history for frontend "console"
+                _sync_state.logs.append(msg)
+                
+                # Update current status text
+                _sync_state.current_file = msg
+                
+                # Update progress percentage
+                if step_name in step_ranges:
+                    _sync_state.progress = step_ranges[step_name]
+                    
+                if step_name == "done":
+                    _sync_state.status = "complete"
 
     except Exception as e:
         with _sync_lock:
             _sync_state.status = "error"
             _sync_state.error_message = str(e)
+            _sync_state.logs.append(f"❌ CRITICAL ERROR: {e}")
             _sync_state.current_file = None
 
 

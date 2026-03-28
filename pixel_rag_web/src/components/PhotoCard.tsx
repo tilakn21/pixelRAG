@@ -16,9 +16,10 @@ const CATEGORY_COLORS: Record<string, string> = {
 interface PhotoCardProps {
   photo: Photo;
   onClick: () => void;
+  libHash?: string;
 }
 
-export default function PhotoCard({ photo, onClick }: PhotoCardProps) {
+export default function PhotoCard({ photo, onClick, libHash }: PhotoCardProps) {
   const dotColor =
     CATEGORY_COLORS[photo.scene_category ?? "other"] ?? "var(--cat-other)";
 
@@ -26,7 +27,7 @@ export default function PhotoCard({ photo, onClick }: PhotoCardProps) {
     <div className="photo-card" onClick={onClick}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={getThumbUrl(photo.id, 400)}
+        src={getThumbUrl(photo.id, 400, libHash)}
         alt={photo.filename}
         loading="lazy"
       />

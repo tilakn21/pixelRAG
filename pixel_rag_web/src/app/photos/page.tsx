@@ -53,7 +53,15 @@ function GalleryContent() {
     try {
       await startSync();
       setSyncing(true);
-      setSyncStatus({ status: "running", progress: 0, current_file: null, photos_processed: 0, photos_total: 0, error_message: null });
+      setSyncStatus({ 
+        status: "running", 
+        progress: 0, 
+        current_file: "Initiating...", 
+        photos_processed: 0, 
+        photos_total: 0, 
+        error_message: null,
+        logs: ["Starting sync pipeline..."] 
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Sync failed";
       setError(msg);
@@ -198,10 +206,49 @@ function GalleryContent() {
         </button>
       </div>
 
-      {/* Sync progress */}
+      {/* Detailed Sync Console */}
       {syncing && syncStatus && (
-        <div className="glass-subtle" style={{ padding: "var(--space-3) var(--space-4)", marginBottom: "var(--space-4)", fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
-          {syncStatus.current_file ?? `Syncing... ${syncStatus.progress}%`}
+        <div className="glass" style={{ 
+          padding: "var(--space-4)", 
+          marginBottom: "var(--space-6)", 
+          borderRadius: "var(--radius-lg)",
+          background: "rgba(0,0,0,0.05)",
+          border: "1px solid var(--border-medium)"
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "var(--space-2)", fontSize: "var(--text-xs)", fontWeight: "bold", textTransform: "uppercase", letterSpacing: "1px" }}>
+            <span>Pipeline Activity</span>
+            <span>{syncStatus.progress}%</span>
+          </div>
+          
+          {/* Progress Bar */}
+          <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 3, marginBottom: "var(--space-4)", overflow: "hidden" }}>
+             <div style={{ height: "100%", width: `${syncStatus.progress}%`, background: "var(--accent-primary)", transition: "width 0.5s ease-out" }} />
+          </div>
+
+          <div 
+            style={{ 
+              height: 120, 
+              overflowY: "auto", 
+              fontFamily: "monospace", 
+              fontSize: "12px", 
+              lineHeight: "1.6",
+              color: "var(--text-secondary)",
+              display: "flex",
+              flexDirection: "column-reverse" // Shows newest at bottom and keeps scroll there
+            }}
+          >
+            {syncStatus.logs.slice().reverse().map((log, i) => (
+              <div key={i} style={{ marginBottom: "2px" }}>
+                {log.startsWith("✅") || log.startsWith("🎉") ? (
+                  <span style={{ color: "#2e7d32" }}>{log}</span>
+                ) : log.startsWith("❌") || log.startsWith("⚠️") ? (
+                  <span style={{ color: "#c62828" }}>{log}</span>
+                ) : (
+                  <span>{log}</span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

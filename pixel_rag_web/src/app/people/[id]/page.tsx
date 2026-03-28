@@ -2,10 +2,11 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
-import { fetchPerson, fetchPhotos } from "@/lib/api";
+import { deletePerson, fetchPerson, fetchPhotos } from "@/lib/api";
 import type { Person, Photo } from "@/lib/types";
 import PhotoGrid from "@/components/PhotoGrid";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -18,7 +19,9 @@ export default function PersonPhotosPage({ params }: PageProps) {
   const [person, setPerson] = useState<Person | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     async function loadData() {
@@ -39,6 +42,21 @@ export default function PersonPhotosPage({ params }: PageProps) {
     }
     loadData();
   }, [personId]);
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Are you sure you want to dissolve the cluster for "${person?.name || "this person"}"? \n\nThis will remove the identity and unlink all photos. No photos will be deleted.`)) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await deletePerson(personId);
+      router.push("/people");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to dissolve cluster");
+      setIsDeleting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -101,6 +119,25 @@ export default function PersonPhotosPage({ params }: PageProps) {
             <p className="page-subtitle">
               {person.face_count} photo{person.face_count !== 1 ? "s" : ""} identified
             </p>
+          </div>
+          <div style={{ marginLeft: "auto" }}>
+            <button 
+              className="btn" 
+              onClick={handleDelete}
+              disabled={isDeleting}
+              style={{ 
+                background: "rgba(255, 69, 58, 0.1)", 
+                color: "#ff453a",
+                border: "1px solid rgba(255, 69, 58, 0.2)",
+                padding: "10px 20px",
+                fontSize: "var(--text-sm)",
+                fontWeight: "var(--weight-bold)",
+                borderRadius: "var(--radius-lg)",
+                transition: "all 0.2s"
+              }}
+            >
+              {isDeleting ? "Dissolving..." : "Dissolve Cluster"}
+            </button>
           </div>
         </div>
       </header>

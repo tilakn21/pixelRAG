@@ -33,7 +33,12 @@ def _map_photos(db_path: str, photos: list) -> list[PhotoResponse]:
         filename = path.rsplit("/", 1)[-1] if "/" in path else path
 
         person_rows = conn.execute(
-            "SELECT DISTINCT person_id FROM faces WHERE photo_id = ? AND person_id IS NOT NULL",
+            """
+            SELECT DISTINCT p.id, p.name 
+            FROM faces f
+            JOIN people p ON f.person_id = p.id
+            WHERE f.photo_id = ? AND p.confirmed = 1 AND f.person_id IS NOT NULL
+            """,
             (photo_id,),
         ).fetchall()
 
@@ -50,6 +55,9 @@ def _map_photos(db_path: str, photos: list) -> list[PhotoResponse]:
                 country=photo.get("country"),
                 has_faces=bool(photo.get("has_faces", 0)),
                 person_ids=[r[0] for r in person_rows],
+                person_names=[r[1] for r in person_rows],
+                camera_make=photo.get("camera_make"),
+                camera_model=photo.get("camera_model"),
             )
         )
     conn.close()
@@ -125,7 +133,11 @@ async def search_by_face(request: Request, file: UploadFile = File(...)):
     # 1. Identity match via Gallery
     match_result = find_person_by_image(db_path, content)
     if "error" in match_result:
-        raise HTTPException(status_code=404, detail={"error": match_result["error"]})
+        # Using 400 (Bad Request) instead of 404 to avoid confusion with 'path not found'
+        raise HTTPException(
+            status_code=400, 
+            detail={"error": f"Match failed: {match_result['error']}"}
+        )
         
     person_id = match_result["person_id"]
     person_name = match_result["name"]

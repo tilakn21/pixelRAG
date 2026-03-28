@@ -20,6 +20,9 @@ class PhotoResponse(BaseModel):
     country: Optional[str] = None
     has_faces: bool = False
     person_ids: List[int] = Field(default_factory=list)
+    person_names: List[str] = Field(default_factory=list)
+    camera_make: Optional[str] = None
+    camera_model: Optional[str] = None
 
 
 class PaginatedPhotos(BaseModel):
@@ -64,6 +67,7 @@ class SyncStatus(BaseModel):
     photos_processed: int = 0
     photos_total: int = 0
     error_message: Optional[str] = None
+    logs: List[str] = Field(default_factory=list)
 
 
 class SearchSuggestions(BaseModel):
@@ -76,3 +80,5 @@ class HealthResponse(BaseModel):
     photo_count: int = 0
     person_count: int = 0
     library_path: str = ""
+    known_libraries: List[str] = Field(default_factory=list)
+    lib_hash: str = ""

@@ -9,10 +9,14 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".bmp"}
 
 def iter_image_files(root_dir: Path) -> Iterable[Path]:
     """
-    Recursively yield all image files under root_dir.
+    Recursively yield all image files under root_dir, skipping hidden folders (starting with .).
     """
-    for path in root_dir.rglob("*"):
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTS:
+    for path in root_dir.iterdir():
+        if path.name.startswith("."):
+            continue
+        if path.is_dir():
+            yield from iter_image_files(path)
+        elif path.is_file() and path.suffix.lower() in IMAGE_EXTS:
             yield path
 
 
