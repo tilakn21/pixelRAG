@@ -31,13 +31,31 @@ export default function CategoryPills({
             <button
               key={cat.key}
               className={`chip ${isActive ? "chip--active" : ""}`}
+              style={{
+                fontFamily: "var(--font-pixel)",
+                textTransform: "uppercase",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "8px 16px",
+                borderRadius: "99px",
+                border: "var(--border-thick)",
+                background: isActive ? "var(--electric-blue)" : "#fff",
+                color: isActive ? "#fff" : "var(--obsidian)",
+                cursor: "pointer",
+                transition: "all 0.1s"
+              }}
               onClick={() => onSelect(cat.key === "all" ? null : cat.key)}
               role="tab"
               aria-selected={isActive}
             >
-              <span className="chip__mark">{cat.mark}</span>
+              <span style={{ opacity: 0.6 }}>{cat.mark}</span>
               <span>{cat.label}</span>
-              {count !== undefined ? <span className="chip__count">{count}</span> : null}
+              {count !== undefined ? (
+                <span style={{ background: isActive ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.05)", padding: "0 6px", borderRadius: "4px", fontSize: "0.7rem" }}>
+                  {count}
+                </span>
+              ) : null}
             </button>
           );
         })}

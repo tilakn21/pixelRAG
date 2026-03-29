@@ -80,7 +80,8 @@ async def list_photos(
     offset = (page - 1) * page_size
     data_sql = f"""
         SELECT p.id, p.path, p.created_at, p.scene_category, p.scene_confidence,
-               p.city, p.state, p.country, p.has_faces, p.camera_make, p.camera_model
+               p.city, p.state, p.country, p.has_faces, p.camera_make, p.camera_model,
+               p.description, p.scene_tags, p.latitude, p.longitude
         FROM photos p
         {where_sql}
         ORDER BY {sort_col} {sort_order.upper()} NULLS LAST
@@ -112,6 +113,10 @@ async def list_photos(
                 person_names=person_names,
                 camera_make=row["camera_make"],
                 camera_model=row["camera_model"],
+                latitude=row["latitude"],
+                longitude=row["longitude"],
+                description=row["description"],
+                scene_tags=[t.strip() for t in row["scene_tags"].split(",")] if row["scene_tags"] else [],
             )
         )
 

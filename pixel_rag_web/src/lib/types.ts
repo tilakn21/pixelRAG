@@ -25,6 +25,10 @@ export interface Photo {
   person_names: string[];
   camera_make: string | null;
   camera_model: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  description: string | null;
+  scene_tags: string[];
 }
 
 export interface PaginatedPhotos {

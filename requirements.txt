@@ -187,3 +187,4 @@ ImageHash==4.3.2
 hdbscan==0.8.41
 open-clip-torch==3.3.0
 rapidfuzz==3.14.3
+groq

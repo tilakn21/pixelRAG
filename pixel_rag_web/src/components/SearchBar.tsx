@@ -96,7 +96,8 @@ export default function SearchBar({
         <input
           ref={inputRef}
           className="search-shell__input"
-          placeholder={PROMPTS[promptIndex]}
+          style={{ fontFamily: "var(--font-mono)", fontSize: "1.1rem", border: "none", background: "transparent", color: "var(--obsidian)" }}
+          placeholder={PROMPTS[promptIndex].toUpperCase()}
           value={value}
           onChange={(e) => {
             setValue(e.target.value);
@@ -118,57 +119,60 @@ export default function SearchBar({
           {onImageSearch ? (
             <button
               type="button"
-              className="button button--ghost button--icon"
+              className="button button--secondary"
+              style={{ minWidth: "52px", padding: "0", borderRadius: "12px" }}
               onClick={() => fileInputRef.current?.click()}
               title="Search by image"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} style={{ width: "22px" }}>
                 <path d="M21 18.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18.5v-9A2.5 2.5 0 0 1 5.5 7H9l1.7-2h2.6L15 7h3.5A2.5 2.5 0 0 1 21 9.5z" />
                 <circle cx="12" cy="13" r="3.5" />
               </svg>
             </button>
           ) : null}
 
-          <button type="submit" className="button button--primary">
-            {loading ? "Analyzing" : "Search"}
+          <button type="submit" className="button button--primary" style={{ borderRadius: "12px", fontFamily: "var(--font-pixel)", fontSize: "1.2rem", padding: "0 24px" }}>
+            {loading ? "ANALYZING" : "SEARCH"}
           </button>
         </div>
       </div>
 
       {showDropdown && (filteredPeople.length > 0 || filteredCities.length > 0) && (
-        <div className="search-shell__suggestions">
+        <div className="search-shell__suggestions" style={{ border: "var(--border-thick)", borderRadius: "16px", background: "var(--gallery-white)", boxShadow: "var(--shadow-panel)", marginTop: "10px", padding: "16px" }}>
           {filteredPeople.length > 0 && (
             <div className="suggestion-group">
-              <div className="suggestion-heading">
-                People
+              <div className="suggestion-heading" style={{ fontFamily: "var(--font-pixel)", color: "var(--obsidian)", opacity: 0.6 }}>
+                PEOPLE_INDEX
               </div>
               {filteredPeople.slice(0, 5).map((name) => (
                 <button
                   key={name}
                   type="button"
                   className="suggestion-button"
+                  style={{ fontFamily: "var(--font-pixel)", fontSize: "1.1rem", borderRadius: "8px", padding: "8px 12px" }}
                   onClick={() => handleSuggestionClick(`Photos of ${name}`)}
                 >
-                  <span className="chip__mark">ID</span>
-                  <span>{name}</span>
+                  <span style={{ color: "var(--electric-blue)", marginRight: "8px" }}>&gt;&gt;</span>
+                  <span>{name.toUpperCase()}</span>
                 </button>
               ))}
             </div>
           )}
           {filteredCities.length > 0 && (
-            <div className="suggestion-group">
-              <div className="suggestion-heading">
-                Places
+            <div className="suggestion-group" style={{ marginTop: "12px" }}>
+              <div className="suggestion-heading" style={{ fontFamily: "var(--font-pixel)", color: "var(--obsidian)", opacity: 0.6 }}>
+                GEOGRAPHIC_NODES
               </div>
               {filteredCities.slice(0, 5).map((city) => (
                 <button
                   key={city}
                   type="button"
                   className="suggestion-button"
+                  style={{ fontFamily: "var(--font-pixel)", fontSize: "1.1rem", borderRadius: "8px", padding: "8px 12px" }}
                   onClick={() => handleSuggestionClick(`Photos from ${city}`)}
                 >
-                  <span className="chip__mark">CT</span>
-                  <span>{city}</span>
+                  <span style={{ color: "var(--sun-yellow)", marginRight: "8px" }}>&gt;&gt;</span>
+                  <span>{city.toUpperCase()}</span>
                 </button>
               ))}
             </div>

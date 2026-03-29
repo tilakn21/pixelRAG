@@ -110,12 +110,10 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
 
       if (event.key === "ArrowRight" && lightboxIdx < photos.length - 1) {
         setLightboxIdx(lightboxIdx + 1);
-        setShowDetails(false);
       }
 
       if (event.key === "ArrowLeft" && lightboxIdx > 0) {
         setLightboxIdx(lightboxIdx - 1);
-        setShowDetails(false);
       }
     };
 
@@ -141,12 +139,10 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
 
     if (diff > 0 && lightboxIdx < photos.length - 1) {
       setLightboxIdx(lightboxIdx + 1);
-      setShowDetails(false);
     }
 
     if (diff < 0 && lightboxIdx > 0) {
       setLightboxIdx(lightboxIdx - 1);
-      setShowDetails(false);
     }
   };
 
@@ -162,7 +158,7 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
 
   return (
     <>
-      <div className="photo-grid">
+      <div className="photo-grid--masonry">
         {photos.map((photo, index) => (
           <PhotoCard
             key={photo.id}
@@ -224,10 +220,10 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
             <button
               type="button"
               className="lightbox__nav lightbox__nav--prev"
+              style={{ background: "#000", color: "#fff", border: "var(--border-thick)", borderRadius: "12px", width: "48px", height: "48px", fontSize: "1.5rem", display: "flex", alignItems: "center", justifyContent: "center" }}
               onClick={(event) => {
                 event.stopPropagation();
                 setLightboxIdx(lightboxIdx - 1);
-                setShowDetails(false);
               }}
             >
               <span className="visually-hidden">Previous image</span>
@@ -239,10 +235,10 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
             <button
               type="button"
               className="lightbox__nav lightbox__nav--next"
+              style={{ background: "#000", color: "#fff", border: "var(--border-thick)", borderRadius: "12px", width: "48px", height: "48px", fontSize: "1.5rem", display: "flex", alignItems: "center", justifyContent: "center" }}
               onClick={(event) => {
                 event.stopPropagation();
                 setLightboxIdx(lightboxIdx + 1);
-                setShowDetails(false);
               }}
             >
               <span className="visually-hidden">Next image</span>
@@ -268,14 +264,14 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
               />
 
               {!showDetails ? (
-                <div className="lightbox__meta">
-                  <strong>{activePhoto.filename}</strong>
-                  <span>
+                <div className="lightbox__meta" style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)", padding: "16px 20px", borderTop: "var(--border-thick)" }}>
+                  <strong style={{ fontFamily: "var(--font-pixel)", fontSize: "1.2rem", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>{activePhoto.filename.toUpperCase()}</strong>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", opacity: 0.8, textTransform: "uppercase" }}>
                     {[
                       formatDate(activePhoto.taken_at),
                       formatLocation([activePhoto.city, activePhoto.country]),
                       formatSceneCategory(activePhoto.scene_category),
-                    ].join(" · ")}
+                    ].join(" // ")}
                   </span>
                 </div>
               ) : null}
@@ -283,45 +279,47 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
 
             {showDetails ? (
               <aside className="lightbox__details">
-                <div>
-                  <span className="panel__title">Memory Details</span>
-                  <h2 className="panel__heading">{activePhoto.filename}</h2>
+                <div style={{ marginBottom: "32px" }}>
+                  <span className="panel__title" style={{ fontFamily: "var(--font-pixel)", fontSize: "0.7rem" }}>[ INTEL_NODE ]</span>
+                  <h2 className="panel__heading" style={{ fontFamily: "var(--font-pixel)", fontSize: "1.8rem", textTransform: "uppercase", margin: "8px 0" }}>{activePhoto.filename}</h2>
                 </div>
 
-                <div className="lightbox__row">
-                  <span className="lightbox__label">Captured</span>
-                  <span className="lightbox__value">{formatDateTime(activePhoto.taken_at)}</span>
+                {/* Section: AI Analysis */}
+                <div className="detail-card">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span className="lightbox__label" style={{ margin: 0 }}>AI Confidence</span>
+                    <span style={{ fontFamily: "var(--font-pixel)", color: "var(--electric-purple)" }}>{(activePhoto.scene_confidence || 0 * 100).toFixed(1)}%</span>
+                  </div>
+                  <div className="confidence-meter">
+                    <div className="confidence-bar" style={{ width: `${(activePhoto.scene_confidence || 0) * 100}%` }} />
+                  </div>
+                  
+                  {activePhoto.scene_tags.length > 0 ? (
+                    <div className="tag-flow">
+                      {activePhoto.scene_tags.map(tag => (
+                        <span key={tag} className="tag-pill">#{tag}</span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
 
-                <div className="lightbox__row">
-                  <span className="lightbox__label">Location</span>
-                  <span className="lightbox__value">
-                    {formatLocation([activePhoto.city, activePhoto.state, activePhoto.country])}
-                  </span>
-                </div>
-
-                <div className="lightbox__row">
-                  <span className="lightbox__label">Scene</span>
-                  <span className="lightbox__value">
-                    {formatSceneCategory(activePhoto.scene_category)}
-                  </span>
-                </div>
-
-                {(activePhoto.camera_make || activePhoto.camera_model) ? (
-                  <div className="lightbox__row">
-                    <span className="lightbox__label">Device</span>
-                    <span className="lightbox__value">
-                      {[activePhoto.camera_make, activePhoto.camera_model].filter(Boolean).join(" ")}
-                    </span>
+                {/* Section: Description */}
+                {activePhoto.description ? (
+                  <div className="detail-card">
+                    <span className="lightbox__label">AI Description</span>
+                    <p style={{ margin: "8px 0 0 0", fontSize: "0.9rem", lineHeight: "1.5", color: "var(--obsidian)" }}>
+                      {activePhoto.description}
+                    </p>
                   </div>
                 ) : null}
 
+                {/* Section: Identities */}
                 {activePhoto.person_names.length > 0 ? (
-                  <div className="lightbox__row">
-                    <span className="lightbox__label">Identities</span>
-                    <div className="pill-stack">
+                  <div className="detail-card" style={{ background: "var(--sun-yellow)" }}>
+                    <span className="lightbox__label">Resolved Identities</span>
+                    <div className="pill-stack" style={{ marginTop: "8px" }}>
                       {activePhoto.person_names.map((name) => (
-                        <span key={name} className="meta-pill">
+                        <span key={name} className="meta-pill" style={{ background: "#000", color: "#fff" }}>
                           {name}
                         </span>
                       ))}
@@ -329,9 +327,46 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
                   </div>
                 ) : null}
 
-                <div className="lightbox__row">
-                  <span className="lightbox__label">Local Path</span>
-                  <span className="lightbox__value mono">{activePhoto.path}</span>
+                {/* Section: Location */}
+                <div className="detail-card">
+                  <span className="lightbox__label">Geolocation</span>
+                  <p style={{ margin: "8px 0", fontSize: "0.95rem", fontWeight: "bold" }}>
+                    {formatLocation([activePhoto.city, activePhoto.state, activePhoto.country])}
+                  </p>
+                  {activePhoto.latitude && activePhoto.longitude ? (
+                    <div style={{ marginTop: "12px", display: "flex", gap: "10px", alignItems: "center" }}>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.7rem" }}>{activePhoto.latitude.toFixed(4)}, {activePhoto.longitude.toFixed(4)}</span>
+                      <a 
+                        href={`https://www.google.com/maps?q=${activePhoto.latitude},${activePhoto.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-brutalist"
+                        style={{ padding: "4px 10px", fontSize: "0.6rem", background: "var(--electric-blue)", color: "#fff" }}
+                      >
+                        NAVIGATE_GLOBAL
+                      </a>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Section: Technical Meta */}
+                <div className="detail-card" style={{ background: "rgba(0,0,0,0.03)" }}>
+                  <div className="lightbox__row">
+                    <span className="lightbox__label">Capture Time</span>
+                    <span className="lightbox__value">{formatDateTime(activePhoto.taken_at)}</span>
+                  </div>
+                  <div className="lightbox__row">
+                    <span className="lightbox__label">Device</span>
+                    <span className="lightbox__value">
+                      {[activePhoto.camera_make, activePhoto.camera_model].filter(Boolean).join(" ") || "UNKNOWN_HARDWARE"}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: "12px" }}>
+                    <span className="lightbox__label">System Path</span>
+                    <div style={{ wordBreak: "break-all", fontFamily: "var(--font-mono)", fontSize: "0.65rem", opacity: 0.6, marginTop: "4px" }}>
+                      {activePhoto.path}
+                    </div>
+                  </div>
                 </div>
               </aside>
             ) : null}

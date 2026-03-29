@@ -119,117 +119,131 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
   }, [onUpdate, person.id, selectedFaces]);
 
   return (
-    <article className="person-card">
-      <div className="person-card__header">
-        <div className="person-card__lead">
-          <Link href={`/people/${person.id}`} className="person-card__portrait">
-            {person.cover_face_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${person.cover_face_url}`}
-                alt={person.name ?? "Unnamed person"}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            ) : (
-              <div
-                className="ascii-field ascii-field--silver"
-                style={{ width: "100%", height: "100%", padding: 14, placeContent: "center" }}
-              >
-                <pre aria-hidden="true">{". : :\n: + +\n+ # #\n: + +\n. : :"}</pre>
-              </div>
-            )}
-          </Link>
+    <article className="panel" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div className="person-card__header" style={{ display: "flex", gap: "20px", alignItems: "flex-start" }}>
+        <Link href={`/people/${person.id}`} className="person-card__portrait" style={{ width: "100px", height: "100px", flexShrink: 0, border: "var(--border-thick)", borderRadius: "12px", overflow: "hidden" }}>
+          {person.cover_face_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${person.cover_face_url}`}
+              alt={person.name ?? "Unnamed person"}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          ) : (
+            <div
+              style={{ width: "100%", height: "100%", background: "var(--obsidian)", color: "var(--sun-yellow)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--font-pixel)", fontSize: "0.8rem", textAlign: "center" }}
+            >
+              NO_IMG
+            </div>
+          )}
+        </Link>
 
-          <div className="person-card__identity">
-            {editing ? (
-              <div className="form-inline">
-                <input
-                  className="input"
-                  value={nameInput}
-                  placeholder="Who is this?"
-                  onChange={(event) => setNameInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      void handleName();
-                    }
-                  }}
-                />
+        <div className="person-card__identity" style={{ flexGrow: 1 }}>
+          {editing ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <input
+                className="input--mono"
+                style={{ border: "var(--border-thick)", borderRadius: "8px", padding: "8px 12px", width: "100%" }}
+                value={nameInput}
+                placeholder="WHO_IS_THIS?"
+                onChange={(event) => setNameInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void handleName();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="button button--primary"
+                style={{ borderRadius: "8px", height: "40px", fontSize: "0.9rem" }}
+                disabled={saving || nameInput.trim().length < 2}
+                onClick={() => void handleName()}
+              >
+                {saving ? "SAVING..." : "CONFIRM_IDENTITY"}
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <Link href={`/people/${person.id}`} style={{ fontFamily: "var(--font-pixel)", fontSize: "1.4rem", textTransform: "uppercase", color: "var(--obsidian)", textDecoration: "none" }}>
+                  {person.name || "UNNAMED_NODE"}
+                </Link>
                 <button
                   type="button"
-                  className="button button--primary"
-                  disabled={saving || nameInput.trim().length < 2}
-                  onClick={() => void handleName()}
+                  className="button button--secondary"
+                  style={{ padding: "4px 8px", minHeight: "auto", fontSize: "0.7rem", borderRadius: "6px" }}
+                  onClick={() => setEditing(true)}
                 >
-                  {saving ? "Saving" : "Confirm"}
+                  RENAME
                 </button>
               </div>
-            ) : (
-              <>
-                <div className="form-inline" style={{ justifyContent: "space-between" }}>
-                  <Link href={`/people/${person.id}`} className="person-card__name">
-                    {person.name}
-                  </Link>
-                  <button
-                    type="button"
-                    className="button button--ghost"
-                    onClick={() => setEditing(true)}
-                  >
-                    Rename
-                  </button>
-                </div>
-                <span className="person-card__meta">
-                  {person.face_count} photo{person.face_count !== 1 ? "s" : ""} · {formatPurityScore(person.purity_score)}
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", opacity: 0.6, marginTop: "4px" }}>
+                {person.face_count} FRAMES • {formatPurityScore(person.purity_score)}
+              </span>
+              {person.quality ? (
+                <span style={{ 
+                  display: "inline-block",
+                  marginTop: "8px",
+                  fontFamily: "var(--font-pixel)", 
+                  fontSize: "0.65rem", 
+                  padding: "2px 6px", 
+                  borderRadius: "4px", 
+                  background: person.quality === "good" ? "var(--neon-green)" : "var(--sun-yellow)",
+                  color: "#000",
+                  textTransform: "uppercase",
+                  width: "fit-content"
+                }}>
+                  {badgeLabel}
                 </span>
-              </>
-            )}
-          </div>
+              ) : null}
+            </div>
+          )}
         </div>
-
-        {person.quality ? <span className={badgeClass}>{badgeLabel}</span> : null}
       </div>
 
-      <div className="action-row">
-        <Link href={`/people/${person.id}`} className="button button--secondary">
-          Open cluster
+      <div className="action-row" style={{ display: "flex", gap: "12px" }}>
+        <Link href={`/people/${person.id}`} className="button button--primary" style={{ flexGrow: 1, borderRadius: "12px" }}>
+           OPEN_CLUSTER
         </Link>
         <button
           type="button"
-          className="button button--ghost"
+          className="button button--secondary"
+          style={{ borderRadius: "12px", minWidth: "120px" }}
           onClick={() => setShowMore((value) => !value)}
         >
-          {showMore ? "Hide tools" : "Refine cluster"}
+          {showMore ? "HIDE_TOOLS" : "REFINE"}
         </button>
       </div>
 
       {showMore ? (
-        <div className="stack">
-          <div className="action-row">
-            <button type="button" className="button button--secondary" onClick={() => void handleMergeOpen()}>
-              Merge with similar
+        <div className="stack" style={{ marginTop: "12px", borderTop: "var(--border-thin)", paddingTop: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div className="action-row" style={{ display: "flex", gap: "10px" }}>
+            <button type="button" className="button button--secondary" style={{ flexGrow: 1, borderRadius: "8px", fontSize: "0.8rem", minHeight: "40px" }} onClick={() => void handleMergeOpen()}>
+              MERGE_SIMILAR
             </button>
-            <button type="button" className="button button--secondary" onClick={() => void handleSplitOpen()}>
-              Split cluster
+            <button type="button" className="button button--secondary" style={{ flexGrow: 1, borderRadius: "8px", fontSize: "0.8rem", minHeight: "40px" }} onClick={() => void handleSplitOpen()}>
+              SPLIT_CLUSTER
             </button>
           </div>
-
           {mergeOpen ? (
-            <div className="panel panel--quiet">
-              <span className="panel__title">Merge Suggestions</span>
-              <div className="stack">
+            <div className="panel" style={{ background: "#f8f8f8", padding: "16px" }}>
+              <span className="panel__title" style={{ fontFamily: "var(--font-pixel)", fontSize: "0.6rem" }}>[ MERGE_SUGGESTIONS ]</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "12px" }}>
                 {similarPersons.length === 0 ? (
-                  <p>No adjacent clusters surfaced for this identity.</p>
+                  <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", opacity: 0.6 }}>No adjacent clusters surfaced.</p>
                 ) : (
                   similarPersons.map((candidate) => (
                     <button
                       key={candidate.id}
                       type="button"
                       className="button button--secondary"
-                      style={{ justifyContent: "space-between" }}
+                      style={{ justifyContent: "space-between", borderRadius: "8px", width: "100%" }}
                       disabled={merging}
                       onClick={() => void handleMerge(candidate.id)}
                     >
-                      <span>{candidate.name || `Cluster ${candidate.id}`}</span>
-                      <span className="mono">{candidate.face_count} frames</span>
+                      <span style={{ fontFamily: "var(--font-pixel)" }}>{candidate.name || `CLUSTER_${candidate.id}`}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.7rem" }}>{candidate.face_count}F</span>
                     </button>
                   ))
                 )}
@@ -238,14 +252,23 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
           ) : null}
 
           {splitOpen ? (
-            <div className="panel panel--quiet">
-              <span className="panel__title">Split Selection</span>
-              <div className="cluster-strip">
+            <div className="panel" style={{ background: "#f8f8f8", padding: "16px" }}>
+              <span className="panel__title" style={{ fontFamily: "var(--font-pixel)", fontSize: "0.6rem" }}>[ SPLIT_SELECTION ]</span>
+              <div className="cluster-strip" style={{ display: "flex", gap: "8px", overflowX: "auto", padding: "12px 0", scrollbarWidth: "thin" }}>
                 {allFaces.map((faceId) => (
                   <button
                     key={faceId}
                     type="button"
-                    className={`face-thumb ${selectedFaces.has(faceId) ? "face-thumb--active" : ""}`}
+                    className="face-thumb"
+                    style={{ 
+                      flexShrink: 0, 
+                      width: "60px", 
+                      height: "60px", 
+                      border: selectedFaces.has(faceId) ? "3px solid var(--electric-blue)" : "1px solid #ccc",
+                      borderRadius: "8px",
+                      overflow: "hidden",
+                      transition: "all 0.1s"
+                    }}
                     onClick={() => toggleFace(faceId)}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -258,24 +281,26 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
                 ))}
               </div>
 
-              <div className="action-row">
+              <div className="action-row" style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
                 <button
                   type="button"
                   className="button button--primary"
+                  style={{ borderRadius: "8px", fontSize: "0.8rem", flexGrow: 1 }}
                   disabled={splitting || selectedFaces.size === 0}
                   onClick={() => void handleSplit()}
                 >
-                  {splitting ? "Splitting" : `Split ${selectedFaces.size} face${selectedFaces.size === 1 ? "" : "s"}`}
+                  {splitting ? "SPLITTING..." : `SPLIT_${selectedFaces.size}_FACES`}
                 </button>
                 <button
                   type="button"
-                  className="button button--ghost"
+                  className="button button--secondary"
+                  style={{ borderRadius: "8px", fontSize: "0.8rem", background: "transparent" }}
                   onClick={() => {
                     setSplitOpen(false);
                     setSelectedFaces(new Set());
                   }}
                 >
-                  Cancel
+                  CANCEL
                 </button>
               </div>
             </div>

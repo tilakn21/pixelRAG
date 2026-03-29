@@ -5,8 +5,8 @@ import { useSearchParams } from "next/navigation";
 import AsciiField from "@/components/AsciiField";
 import CategoryPills from "@/components/CategoryPills";
 import PhotoGrid from "@/components/PhotoGrid";
-import { fetchHealth, fetchSyncStatus, setLibraryPath, startSync } from "@/lib/api";
-import { formatLibraryLabel } from "@/lib/display";
+import { startSync, fetchHealth, fetchSyncStatus, setLibraryPath } from "@/lib/api";
+import { formatLibraryLabel, formatCompactNumber } from "@/lib/display";
 import type { HealthResponse, SyncStatus } from "@/lib/types";
 
 function ArchiveContent() {
@@ -102,29 +102,29 @@ function ArchiveContent() {
 
   if (health && health.status === "setup_required") {
     return (
-      <div className="route">
-        <section className="route-hero route-hero--split">
+      <div className="bento-container" style={{ display: "grid", gap: "20px", gridTemplateColumns: "repeat(12, 1fr)", padding: "20px 0" }}>
+        <article className="panel animate-reveal stagger-1" style={{ gridColumn: "span 12", background: "var(--electric-purple)", color: "#fff", minHeight: "300px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <div className="title-block">
-            <span className="eyebrow">Endless Archive</span>
-            <h1 className="page-title">Connect a photo library to begin.</h1>
-            <p className="page-subtitle">
+            <span className="eyebrow" style={{ fontFamily: "var(--font-pixel)", color: "var(--sun-yellow)" }}>[ SETUP_REQUIRED ]</span>
+            <h1 className="page-title" style={{ fontFamily: "var(--font-pixel)", fontSize: "var(--text-3xl)", textTransform: "uppercase" }}>CONNECT ARCHIVE</h1>
+            <p className="page-subtitle" style={{ fontSize: "var(--text-lg)", maxWidth: "600px" }}>
               PixelRAG needs an absolute path to the folder you want indexed locally.
             </p>
           </div>
-          <AsciiField className="hero-ascii" variant="horizon" tone="silver" caption="Awaiting source imagery" scale="hero" />
-        </section>
+        </article>
 
-        <section className="panel panel--accent">
-          <form className="form-stack" onSubmit={handleSetup}>
+        <section className="panel animate-reveal stagger-2" style={{ gridColumn: "span 12" }}>
+          <form className="form-stack" onSubmit={handleSetup} style={{ display: "flex", gap: "20px", alignItems: "center" }}>
             <input
-              className="input input--mono"
+              className="input--mono"
+              style={{ flexGrow: 1, border: "var(--border-thick)", borderRadius: "12px", padding: "12px 20px", fontSize: "1rem" }}
               value={libraryInput}
               onChange={(event) => setLibraryInput(event.target.value)}
               placeholder="/Users/yourname/Photos"
               disabled={setupSaving}
             />
-            <button type="submit" className="button button--primary" disabled={setupSaving || !libraryInput.trim()}>
-              {setupSaving ? "Saving" : "Set library path"}
+            <button type="submit" className="button button--primary" style={{ height: "52px", borderRadius: "12px" }} disabled={setupSaving || !libraryInput.trim()}>
+              {setupSaving ? "SAVING..." : "MOUNT_INDEX"}
             </button>
           </form>
         </section>
@@ -134,39 +134,37 @@ function ArchiveContent() {
 
   if (health && health.photo_count === 0) {
     return (
-      <div className="route">
-        <section className="route-hero route-hero--split">
+      <div className="bento-container" style={{ display: "grid", gap: "20px", gridTemplateColumns: "repeat(12, 1fr)", padding: "20px 0" }}>
+        <article className="panel animate-reveal stagger-1" style={{ gridColumn: "span 8", background: "var(--electric-blue)", color: "#fff", minHeight: "400px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <div className="title-block">
-            <span className="eyebrow">Endless Archive</span>
-            <h1 className="page-title">The archive is connected but still empty.</h1>
-            <p className="page-subtitle">
+            <span className="eyebrow" style={{ fontFamily: "var(--font-pixel)", color: "var(--sun-yellow)" }}>[ EMPTY_ARCHIVE ]</span>
+            <h1 className="page-title" style={{ fontFamily: "var(--font-pixel)", fontSize: "var(--text-3xl)", textTransform: "uppercase" }}>THE INDEX IS EMPTY</h1>
+            <p className="page-subtitle" style={{ fontSize: "var(--text-lg)", maxWidth: "500px" }}>
               Run the first sync to decode thumbnails, extract structure, and make the collection searchable.
             </p>
-            <div className="hero-actions">
-              <button type="button" className="button button--primary" onClick={() => void handleSync()} disabled={syncing}>
-                {syncing ? "Syncing" : "Start first sync"}
+            <div className="hero-actions" style={{ marginTop: "32px" }}>
+              <button type="button" className="button button--secondary" style={{ borderRadius: "12px", border: "var(--border-thick)" }} onClick={() => void handleSync()} disabled={syncing}>
+                {syncing ? "SYNCING..." : "START_FIRST_SYNC"}
               </button>
             </div>
           </div>
-          <AsciiField className="hero-ascii" variant="wave" tone="cobalt" caption="Archive warm-up / decode pass" scale="hero" />
-        </section>
+        </article>
+        
+        <article className="panel animate-reveal stagger-2" style={{ gridColumn: "span 4", background: "var(--obsidian)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+           <AsciiField variant="wave" tone="silver" caption="Archive warm-up" scale="hero" />
+        </article>
 
         {syncing && syncStatus ? (
-          <section className="status-console">
-            <div className="status-console__header">
+          <section className="panel" style={{ gridColumn: "span 12", background: "#f0f0f0" }}>
+            <div className="status-console__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
               <div>
-                <span className="status-console__label">Sync activity</span>
-                <h2 className="panel__heading">{syncStatus.current_file ?? "Processing"}</h2>
+                <span className="status-console__label" style={{ fontFamily: "var(--font-pixel)", opacity: 0.6 }}>SYNC_ACTIVITY</span>
+                <h2 className="panel__heading" style={{ fontSize: "1.2rem", margin: "4px 0" }}>{syncStatus.current_file ?? "Processing..."}</h2>
               </div>
-              <span className="meta-pill">{syncStatus.progress}%</span>
+              <span style={{ fontFamily: "var(--font-pixel)", fontSize: "2rem" }}>{syncStatus.progress}%</span>
             </div>
-            <div className="status-console__track">
-              <div className="status-console__bar" style={{ width: `${syncStatus.progress}%` }} />
-            </div>
-            <div className="status-console__log">
-              {(syncStatus.logs ?? []).slice(-10).reverse().map((log) => (
-                <span key={log}>{log}</span>
-              ))}
+            <div className="status-console__track" style={{ height: "12px", background: "#ddd", border: "var(--border-thin)", borderRadius: "6px", overflow: "hidden" }}>
+              <div className="status-console__bar" style={{ width: `${syncStatus.progress}%`, height: "100%", background: "var(--electric-blue)" }} />
             </div>
           </section>
         ) : null}
@@ -175,42 +173,57 @@ function ArchiveContent() {
   }
 
   return (
-    <div className="route">
-      <section className="route-hero route-hero--split">
-        <div className="stack">
-          <div className="title-block">
-            <span className="eyebrow">Endless Archive</span>
-            <h1 className="page-title">{formatLibraryLabel(health?.library_path)}</h1>
-            <p className="page-subtitle">
-              Browse the full index with quiet filters, inline sync visibility, and metadata only when it helps.
-            </p>
-          </div>
-
-          <div className="route-meta">
-            <span className="meta-pill">{health?.photo_count ?? 0} photos</span>
-            <span className="meta-pill">{health?.person_count ?? 0} people</span>
-            {category ? <span className="meta-pill">Category · {category}</span> : null}
-          </div>
-
-          <div className="hero-actions">
-            <button type="button" className="button button--primary" onClick={() => void handleSync()} disabled={syncing}>
-              {syncing ? "Syncing archive" : "Sync archive"}
-            </button>
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={() => {
-                setLibraryInput(health?.library_path ?? "");
-                setIsEditingFolder((value) => !value);
-              }}
-            >
-              {isEditingFolder ? "Hide library editor" : "Edit library path"}
-            </button>
-          </div>
+    <div className="bento-container" style={{ display: "grid", gap: "20px", gridTemplateColumns: "repeat(12, 1fr)", padding: "20px 0" }}>
+      {/* Archive Hero */}
+      <article className="panel" style={{ gridColumn: "span 9", background: "var(--electric-purple)", color: "#fff", minHeight: "360px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <div className="title-block">
+          <span className="eyebrow" style={{ fontFamily: "var(--font-pixel)", color: "var(--sun-yellow)" }}>[ ENDLESS_ARCHIVE ]</span>
+          <h1 className="page-title" style={{ fontFamily: "var(--font-pixel)", fontSize: "var(--text-3xl)", textTransform: "uppercase", margin: "8px 0" }}>
+            {formatLibraryLabel(health?.library_path).toUpperCase()}
+          </h1>
+          <p className="page-subtitle" style={{ fontSize: "var(--text-lg)", maxWidth: "540px", opacity: 0.9 }}>
+            Browse the full index with quiet filters, inline sync visibility, and metadata only when it helps.
+          </p>
         </div>
 
-        <AsciiField className="hero-ascii" variant="wave" tone="silver" caption="Live archive / infinite sequence" scale="hero" />
-      </section>
+        <div className="hero-actions" style={{ marginTop: "32px", display: "flex", gap: "12px" }}>
+          <button type="button" className="button button--secondary" style={{ borderRadius: "12px", border: "var(--border-thick)" }} onClick={() => void handleSync()} disabled={syncing}>
+            {syncing ? "SYNCING..." : "SYNC_ARCHIVE"}
+          </button>
+          <button
+            type="button"
+            className="button button--secondary"
+            style={{ borderRadius: "12px", border: "var(--border-thick)", background: "transparent", color: "#fff" }}
+            onClick={() => {
+              setLibraryInput(health?.library_path ?? "");
+              setIsEditingFolder((value) => !value);
+            }}
+          >
+            {isEditingFolder ? "HIDE_EDITOR" : "EDIT_PATH"}
+          </button>
+        </div>
+      </article>
+
+      {/* Quick Stats Grid */}
+      <div style={{ gridColumn: "span 3", display: "grid", gap: "20px" }}>
+        <article className="panel animate-reveal stagger-2" style={{ background: "var(--sun-yellow)", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center" }}>
+          <span style={{ fontSize: "0.8rem", fontFamily: "var(--font-pixel)" }}>PHOTOS</span>
+          <div style={{ fontSize: "2.5rem", fontFamily: "var(--font-pixel)" }}>{formatCompactNumber(health?.photo_count)}</div>
+        </article>
+        <article className="panel animate-reveal stagger-3" style={{ background: "var(--obsidian)", color: "#fff", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center" }}>
+          <span style={{ fontSize: "0.8rem", fontFamily: "var(--font-pixel)" }}>PEOPLE</span>
+          <div style={{ fontSize: "2.5rem", fontFamily: "var(--font-pixel)" }}>{formatCompactNumber(health?.person_count)}</div>
+        </article>
+      </div>
+
+      {/* Marquee Ticker */}
+      <article className="panel" style={{ gridColumn: "span 12", background: "var(--obsidian)", color: "#fff", padding: "0", display: "flex", alignItems: "center", overflow: "hidden", height: "60px" }}>
+        <div className="marquee" style={{ whiteSpace: "nowrap", fontSize: "1.5rem", fontFamily: "var(--font-pixel)" }}>
+          <div className="marquee-content" style={{ display: "inline-block", paddingLeft: "100%", animation: "marquee 20s linear infinite" }}>
+            ARCHIVE STATUS: STABLE • ALL NODES OPERATIONAL • INDEXING COMPLETE • PIXELRAG VERSION 1.0 • SYSTEM SECURE • 
+          </div>
+        </div>
+      </article>
 
       {error ? (
         <div className="status-banner status-banner--error">
@@ -220,57 +233,53 @@ function ArchiveContent() {
       ) : null}
 
       {syncStatus && syncing ? (
-        <section className="status-console">
-          <div className="status-console__header">
+        <section className="panel" style={{ gridColumn: "span 12", background: "#f8f8f8" }}>
+          <div className="status-console__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
             <div>
-              <span className="status-console__label">Pipeline Activity</span>
-              <h2 className="panel__heading">{syncStatus.current_file ?? "Scanning library"}</h2>
+              <span className="status-console__label" style={{ fontFamily: "var(--font-pixel)", opacity: 0.6 }}>PIPELINE_ACTIVITY</span>
+              <h2 className="panel__heading" style={{ fontSize: "1.2rem", margin: "4px 0" }}>{syncStatus.current_file ?? "Scanning library..."}</h2>
             </div>
-            <span className="meta-pill">{syncStatus.progress}%</span>
+            <span style={{ fontFamily: "var(--font-pixel)", fontSize: "2rem" }}>{syncStatus.progress}%</span>
           </div>
 
-          <div className="status-console__meta">
-            <span>{syncStatus.photos_processed} processed</span>
-            <span>{syncStatus.photos_total} total frames</span>
-            <span>{syncStatus.status}</span>
+          <div style={{ display: "flex", gap: "20px", fontFamily: "var(--font-mono)", fontSize: "0.8rem", marginBottom: "12px", textTransform: "uppercase" }}>
+            <span>{syncStatus.photos_processed} PROCESSED</span>
+            <span>{syncStatus.photos_total} TOTAL_FRAMES</span>
+            <span style={{ color: "var(--electric-blue)" }}>[ {syncStatus.status} ]</span>
           </div>
 
-          <div className="status-console__track">
-            <div className="status-console__bar" style={{ width: `${syncStatus.progress}%` }} />
-          </div>
-
-          <div className="status-console__log">
-            {(syncStatus.logs ?? []).slice(-12).reverse().map((log) => (
-              <span key={log}>{log}</span>
-            ))}
+          <div className="status-console__track" style={{ height: "12px", background: "#ddd", border: "var(--border-thin)", borderRadius: "6px", overflow: "hidden" }}>
+            <div className="status-console__bar" style={{ width: `${syncStatus.progress}%`, height: "100%", background: "var(--electric-blue)" }} />
           </div>
         </section>
       ) : null}
 
       {isEditingFolder ? (
-        <section className="panel panel--quiet">
-          <span className="panel__title">Library Editor</span>
-          <form className="form-inline" onSubmit={handleSetup}>
+        <section className="panel" style={{ gridColumn: "span 12", background: "var(--sun-yellow)" }}>
+          <span className="panel__title" style={{ fontFamily: "var(--font-pixel)", color: "#000" }}>ARCHIVE_MOUNT_EDITOR</span>
+          <form className="form-inline" onSubmit={handleSetup} style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
             <input
-              className="input input--mono"
+              className="input--mono"
+              style={{ flex: 1, border: "var(--border-thick)", borderRadius: "12px", padding: "0 16px", background: "#fff" }}
               value={libraryInput}
               onChange={(event) => setLibraryInput(event.target.value)}
               placeholder="/Users/yourname/Photos"
               disabled={setupSaving}
-              style={{ flex: 1, minWidth: 280 }}
             />
-            <button type="submit" className="button button--primary" disabled={setupSaving || !libraryInput.trim()}>
-              {setupSaving ? "Saving" : "Save path"}
+            <button type="submit" className="button button--primary" style={{ borderRadius: "12px" }} disabled={setupSaving || !libraryInput.trim()}>
+              {setupSaving ? "SAVING..." : "COMMIT_PATH"}
             </button>
           </form>
         </section>
       ) : null}
 
-      <section className="archive-toolbar">
+      <section className="panel" style={{ gridColumn: "span 12", padding: "16px" }}>
         <CategoryPills active={category} onSelect={setCategory} />
       </section>
 
-      <PhotoGrid key={category ?? "all"} category={category} />
+      <div style={{ gridColumn: "span 12" }}>
+        <PhotoGrid key={category ?? "all"} category={category} />
+      </div>
     </div>
   );
 }

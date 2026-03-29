@@ -12,6 +12,7 @@ load_dotenv()
 
 from google import genai
 from google.genai import types
+from groq import Groq
 
 # Add project root to path so we can resolve pixel_rag_core imports easily
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -31,12 +32,23 @@ VALID_SCENE_CATEGORIES = [
 class GraphQueryEngine:
     def __init__(self, db_path: str = str(DB_PATH)):
         self.db_path = Path(db_path)
-        self.model_name = os.getenv("LLM_MODEL", "gemini-2.5-flash")  # Free tier defaults
+        self.model_name = os.getenv("LLM_MODEL", "gemini-2.5-flash")
+        self.groq_model = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+        
+        # Initialize Gemini
         try:
             self.client = genai.Client()  # Requires GEMINI_API_KEY
         except Exception as e:
             self.client = None
-            print(f"[PixelRAG] Warning: LLM Client failed to initialize ({e}). NLP will not work.")
+            print(f"[PixelRAG] Warning: Gemini Client failed to initialize ({e}).")
+
+        # Initialize Groq Fallback
+        try:
+            groq_key = os.getenv("GROQ_API_KEY")
+            self.groq_client = Groq(api_key=groq_key) if groq_key else None
+        except Exception as e:
+            self.groq_client = None
+            print(f"[PixelRAG] Warning: Groq Client failed to initialize ({e}).")
 
     def _resolve_names(self, names: List[str]) -> tuple[List[str], Optional[str]]:
         """
@@ -122,33 +134,60 @@ class GraphQueryEngine:
         - scene_category should be null when the user does not mention any content type.
         '''
 
-        if not self.client:
-            print("[PixelRAG] No Gemini Client found. Cannot parse query.")
+        if not self.client and not self.groq_client:
+            print("[PixelRAG] No LLM Client found. Cannot parse query.")
             return {"names": [], "date": "", "location": "", "scene_category": None, "strict": True, "exclusive": False}
 
-        print(f"[PixelRAG] Querying {self.model_name} (Zero-cost free tier) to parse intent...")
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=f"Extract parameters from this query: {prompt}",
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
+        # Try Gemini First
+        if self.client:
+            print(f"[PixelRAG] Querying {self.model_name} (Gemini) to parse intent...")
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=f"Extract parameters from this query: {prompt}",
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                    ),
+                )
+                data = json.loads(response.text.strip())
+                return self._finalize_params(data)
+            except Exception as e:
+                print(f"[PixelRAG] Gemini parse failed: {e}")
+                if not self.groq_client:
+                    return {"names": [], "date": "", "location": "", "scene_category": None, "strict": True, "exclusive": False}
+
+        # Fallback to Groq
+        if self.groq_client:
+            print(f"[PixelRAG] Falling back to Groq ({self.groq_model}) for intent parsing...")
+            try:
+                completion = self.groq_client.chat.completions.create(
+                    model=self.groq_model,
+                    messages=[
+                        {"role": "system", "content": system_instruction},
+                        {"role": "user", "content": f"Extract parameters from this query: {prompt}"}
+                    ],
                     temperature=0.0,
-                    response_mime_type="application/json",
-                ),
-            )
-            data = json.loads(response.text.strip())
-            return {
-                "names": data.get("names", []),
-                "date": data.get("date", ""),
-                "location": data.get("location", ""),
-                "scene_category": data.get("scene_category"),
-                "strict": data.get("strict", True),
-                "exclusive": data.get("exclusive", False)
-            }
-        except Exception as e:
-            print(f"[PixelRAG] Failed to parse query via LLM: {e}")
-            return {"names": [], "date": "", "location": "", "scene_category": None, "strict": True, "exclusive": False}
+                    response_format={"type": "json_object"}
+                )
+                data = json.loads(completion.choices[0].message.content)
+                return self._finalize_params(data)
+            except Exception as e:
+                print(f"[PixelRAG] Groq fallback also failed: {e}")
+
+        return {"names": [], "date": "", "location": "", "scene_category": None, "strict": True, "exclusive": False}
+
+    def _finalize_params(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize parsed JSON into standard search parameters."""
+        return {
+            "names": data.get("names", []),
+            "date": data.get("date", ""),
+            "location": data.get("location", ""),
+            "scene_category": data.get("scene_category"),
+            "strict": data.get("strict", True),
+            "exclusive": data.get("exclusive", False)
+        }
 
     def build_sql(self, names: List[str], date: str, location: str,
                   scene_category: Optional[str] = None,

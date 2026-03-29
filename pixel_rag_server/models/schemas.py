@@ -23,6 +23,10 @@ class PhotoResponse(BaseModel):
     person_names: List[str] = Field(default_factory=list)
     camera_make: Optional[str] = None
     camera_model: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    description: Optional[str] = None
+    scene_tags: List[str] = Field(default_factory=list)
 
 
 class PaginatedPhotos(BaseModel):

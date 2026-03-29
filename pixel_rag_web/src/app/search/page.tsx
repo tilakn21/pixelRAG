@@ -6,6 +6,7 @@ import AsciiField from "@/components/AsciiField";
 import CategoryPills from "@/components/CategoryPills";
 import PhotoGrid from "@/components/PhotoGrid";
 import SearchBar from "@/components/SearchBar";
+import FullscreenLoader from "@/components/FullscreenLoader";
 import { searchByFace, searchPhotos } from "@/lib/api";
 import { formatSceneCategory } from "@/lib/display";
 import type { SearchResponse } from "@/lib/types";
@@ -96,34 +97,32 @@ function SearchContent() {
     : [];
 
   return (
-    <div className="route">
-      <section className="route-hero route-hero--split">
-        <div className="stack">
-          <div className="title-block">
-            <span className="eyebrow">AI Symphony</span>
-            <h1 className="page-title">Search with intent, not folders.</h1>
-            <p className="page-subtitle">
-              Ask for people, cities, moods, dates, or scenes. PixelRAG resolves them into a precise photographic shortlist.
-            </p>
-          </div>
+    <div className="bento-container" style={{ display: "grid", gap: "20px", gridTemplateColumns: "repeat(12, 1fr)", padding: "20px 0" }}>
+      {/* Search Hero */}
+      <article className="panel animate-reveal stagger-1" style={{ gridColumn: "span 12", background: "var(--electric-purple)", color: "#fff", minHeight: "360px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <div className="title-block">
+          <span className="eyebrow" style={{ fontFamily: "var(--font-pixel)", color: "var(--sun-yellow)" }}>[ AI_SYMPHONY ]</span>
+          <h1 className="page-title" style={{ fontFamily: "var(--font-pixel)", fontSize: "var(--text-3xl)", textTransform: "uppercase", margin: "8px 0" }}>
+            SEARCH_WITH_INTENT
+          </h1>
+          <p className="page-subtitle" style={{ fontSize: "var(--text-lg)", maxWidth: "600px", opacity: 0.9 }}>
+            Ask for people, cities, moods, dates, or scenes. PixelRAG resolves them into a precise photographic shortlist.
+          </p>
+        </div>
 
+        <div style={{ marginTop: "32px", maxWidth: "800px" }}>
           <SearchBar
             onSearch={(query) => void handleSearch(query)}
             onImageSearch={(file) => void handleImageSearch(file)}
             loading={loading}
             initialValue={queryFromUrl}
           />
-
-          <CategoryPills active={null} onSelect={handleCategorySelect} />
         </div>
+      </article>
 
-        <AsciiField
-          className="hero-ascii"
-          variant="wave"
-          tone="cobalt"
-          caption="Retrieval field / ranked images"
-          scale="hero"
-        />
+      {/* Categories Toolbar */}
+      <section className="panel animate-reveal stagger-2" style={{ gridColumn: "span 12", padding: "16px" }}>
+        <CategoryPills active={null} onSelect={handleCategorySelect} />
       </section>
 
       {error ? (
@@ -133,70 +132,66 @@ function SearchContent() {
         </div>
       ) : null}
 
-      {loading ? (
-        <section className="status-console">
-          <div className="status-console__header">
-            <div>
-              <span className="status-console__label">Processing</span>
-              <h2 className="panel__heading">{SEARCH_PHASES[phaseIndex]}</h2>
-            </div>
-            <AsciiField variant="wave" tone="silver" caption="Computational ripple" scale="inline" />
-          </div>
+      <FullscreenLoader isLoading={loading} phase={SEARCH_PHASES[phaseIndex]} />
 
-          <div className="status-console__meta">
-            <span>Search remains visually stable while the ranking layer resolves.</span>
-          </div>
-        </section>
-      ) : null}
 
       {result ? (
-        <section className="stack">
-          <div className="panel panel--quiet">
-            <div className="panel__header">
-              <div>
-                <span className="panel__title">Result Summary</span>
-                <h2 className="panel__heading">
-                  {result.total_count} result{result.total_count === 1 ? "" : "s"} for “{result.query}”
-                </h2>
-              </div>
-              <span className="meta-pill">{result.execution_time_ms} ms</span>
+        <article className="panel" style={{ gridColumn: "span 12", background: "var(--sun-yellow)", color: "#000" }}>
+          <div className="panel__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <span className="panel__title" style={{ fontFamily: "var(--font-pixel)" }}>[ RESULT_SUMMARY ]</span>
+              <h2 className="panel__heading" style={{ fontFamily: "var(--font-pixel)", fontSize: "1.8rem", margin: "8px 0" }}>
+                {result.total_count} MATCHES FOR "{result.query.toUpperCase()}"
+              </h2>
             </div>
-
-            {result.query.startsWith("Image Search match:") && result.intent.names.length > 0 ? (
-              <div className="route-meta">
-                <span className="meta-pill">Identity match · {result.intent.names[0]}</span>
-                <span className="meta-pill">Visual verification</span>
-              </div>
-            ) : null}
-
-            {intentPills.length > 0 ? (
-              <div className="route-meta">
-                {intentPills.map((pill) => (
-                  <span key={pill} className="meta-pill">
-                    {pill}
-                  </span>
-                ))}
-              </div>
-            ) : null}
+            <span style={{ fontFamily: "var(--font-pixel)", fontSize: "1.2rem" }}>{result.execution_time_ms} MS</span>
           </div>
 
-          {result.results.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginTop: "16px" }}>
+            {result.query.startsWith("Image Search match:") && result.intent.names.length > 0 ? (
+              <>
+                <span style={{ background: "var(--electric-blue)", color: "#fff", padding: "4px 10px", borderRadius: "6px", fontFamily: "var(--font-mono)", fontSize: "0.75rem" }}>IDENTITY_MATCH: {result.intent.names[0].toUpperCase()}</span>
+                <span style={{ background: "var(--obsidian)", color: "#fff", padding: "4px 10px", borderRadius: "6px", fontFamily: "var(--font-mono)", fontSize: "0.75rem" }}>VISUAL_VERIFICATION_COMPLETE</span>
+              </>
+            ) : null}
+
+            {intentPills.map((pill) => (
+              <span key={pill} style={{ background: "rgba(0,0,0,0.1)", color: "#000", padding: "4px 10px", borderRadius: "6px", fontFamily: "var(--font-mono)", fontSize: "0.75rem", border: "1px solid rgba(0,0,0,0.1)" }}>
+                {pill?.toUpperCase()}
+              </span>
+            ))}
+          </div>
+        </article>
+      ) : null}
+
+      <div style={{ gridColumn: "span 12" }}>
+        {result ? (
+          result.results.length > 0 ? (
             <PhotoGrid photos={result.results} />
           ) : (
-            <div className="void-state">
-              <span className="panel__title">No Results</span>
-              <h2 className="panel__heading">Nothing matched this request.</h2>
-              <p>Broaden the terms, remove a date or city constraint, or try searching by a different person.</p>
+            <div className="panel" style={{ background: "#f8f8f8", textAlign: "center", padding: "60px 20px" }}>
+              <span className="panel__title" style={{ fontFamily: "var(--font-pixel)" }}>[ VOID_RESPONSE ]</span>
+              <h2 className="panel__heading" style={{ fontFamily: "var(--font-pixel)", fontSize: "2rem", margin: "12px 0" }}>ZERO_RESULTS_RETURNED</h2>
+              <p style={{ maxWidth: "500px", margin: "0 auto", opacity: 0.6 }}>Broaden the terms, remove a date or city constraint, or try searching by a different person.</p>
             </div>
-          )}
-        </section>
-      ) : !loading ? (
-        <div className="void-state">
-          <span className="panel__title">Search Canvas</span>
-          <h2 className="panel__heading">Describe a memory and let the archive answer.</h2>
-          <p>Start with a person, place, season, scene category, or mood.</p>
+          )
+        ) : !loading ? (
+          <div className="panel" style={{ background: "#f8f8f8", textAlign: "center", padding: "60px 20px" }}>
+            <span className="panel__title" style={{ fontFamily: "var(--font-pixel)" }}>[ SEARCH_CANVAS ]</span>
+            <h2 className="panel__heading" style={{ fontFamily: "var(--font-pixel)", fontSize: "2rem", margin: "12px 0" }}>READY_FOR_INPUT</h2>
+            <p style={{ maxWidth: "500px", margin: "0 auto", opacity: 0.6 }}>Describe a memory and let the archive answer. Start with a person, place, season, scene category, or mood.</p>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Marquee Ticker */}
+      <article className="panel" style={{ gridColumn: "span 12", background: "var(--obsidian)", color: "#fff", padding: "0", display: "flex", alignItems: "center", overflow: "hidden", height: "60px" }}>
+        <div className="marquee" style={{ whiteSpace: "nowrap", fontSize: "1.5rem", fontFamily: "var(--font-pixel)" }}>
+          <div className="marquee-content" style={{ display: "inline-block", paddingLeft: "100%", animation: "marquee 40s linear infinite" }}>
+            SEARCH ENGINE ONLINE • RANKING RESOLVED • SEMANTIC MAPPING COMPLETE • PIXELRAG V1.0 • 
+          </div>
         </div>
-      ) : null}
+      </article>
     </div>
   );
 }

@@ -58,6 +58,10 @@ def _map_photos(db_path: str, photos: list) -> list[PhotoResponse]:
                 person_names=[r[1] for r in person_rows],
                 camera_make=photo.get("camera_make"),
                 camera_model=photo.get("camera_model"),
+                latitude=photo.get("latitude"),
+                longitude=photo.get("longitude"),
+                description=photo.get("description"),
+                scene_tags=[t.strip() for t in photo.get("scene_tags", "").split(",")] if photo.get("scene_tags") else [],
             )
         )
     conn.close()
