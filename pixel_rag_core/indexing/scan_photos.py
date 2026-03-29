@@ -11,13 +11,21 @@ def iter_image_files(root_dir: Path) -> Iterable[Path]:
     """
     Recursively yield all image files under root_dir, skipping hidden folders (starting with .).
     """
-    for path in root_dir.iterdir():
-        if path.name.startswith("."):
+    try:
+        items = root_dir.iterdir()
+    except OSError:
+        return
+
+    for path in items:
+        try:
+            if path.name.startswith("."):
+                continue
+            if path.is_dir():
+                yield from iter_image_files(path)
+            elif path.is_file() and path.suffix.lower() in IMAGE_EXTS:
+                yield path
+        except OSError:
             continue
-        if path.is_dir():
-            yield from iter_image_files(path)
-        elif path.is_file() and path.suffix.lower() in IMAGE_EXTS:
-            yield path
 
 
 def scan_and_index_photos(root_dir: str, db_path: str) -> int:

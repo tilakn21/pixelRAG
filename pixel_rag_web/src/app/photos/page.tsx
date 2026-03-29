@@ -237,7 +237,7 @@ function GalleryContent() {
               flexDirection: "column-reverse" // Shows newest at bottom and keeps scroll there
             }}
           >
-            {syncStatus.logs.slice().reverse().map((log, i) => (
+            {(syncStatus.logs || []).slice().reverse().map((log, i) => (
               <div key={i} style={{ marginBottom: "2px" }}>
                 {log.startsWith("✅") || log.startsWith("🎉") ? (
                   <span style={{ color: "#2e7d32" }}>{log}</span>

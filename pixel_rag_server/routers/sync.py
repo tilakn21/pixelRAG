@@ -50,9 +50,11 @@ def _run_sync_pipeline(library_path: str, db_path: str):
                     _sync_state.status = "complete"
 
     except Exception as e:
+        import traceback
+        tb_str = traceback.format_exc()
         with _sync_lock:
             _sync_state.status = "error"
-            _sync_state.error_message = str(e)
+            _sync_state.error_message = f"{e}\n{tb_str}"
             _sync_state.logs.append(f"❌ CRITICAL ERROR: {e}")
             _sync_state.current_file = None
 

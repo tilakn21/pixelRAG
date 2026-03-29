@@ -20,19 +20,19 @@ export default function LibrarySelector() {
     }
   };
 
-  if (!health || health.known_libraries.length <= 1) return null;
+  if (!health || health.known_libraries?.length <= 1) return null;
 
   return (
     <div className="library-selector">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: "var(--space-2)", opacity: 0.6 }}>
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       </svg>
-      <select 
-        value={health.library_path} 
+      <select
+        value={health.library_path}
         onChange={(e) => handleSwitch(e.target.value)}
         title={health.library_path}
       >
-        {health.known_libraries.map(lib => (
+        {health.known_libraries?.map(lib => (
           <option key={lib} value={lib}>
             {lib.split("/").pop() || lib}
           </option>
@@ -40,7 +40,7 @@ export default function LibrarySelector() {
       </select>
       <div className="library-selector__arrow">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-          <path d="m6 9 6 6 6-6"/>
+          <path d="m6 9 6 6 6-6" />
         </svg>
       </div>
     </div>

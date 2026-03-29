@@ -9,7 +9,7 @@ from PIL import Image, ExifTags
 
 import re
 
-def _fallback_fs_datetime(image_path: Path) -> str | None:
+def _fallback_fs_datetime(image_path: Path) -> Optional[str]:
     try:
         ts = image_path.stat().st_mtime
         dt = datetime.fromtimestamp(ts)
