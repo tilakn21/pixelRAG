@@ -1,11 +1,11 @@
-// pixel_rag_web/src/app/people/[id]/page.tsx
 "use client";
 
-import { use, useEffect, useState } from "react";
-import { deletePerson, fetchPerson, fetchPhotos } from "@/lib/api";
-import type { Person, Photo } from "@/lib/types";
-import PhotoGrid from "@/components/PhotoGrid";
 import Link from "next/link";
+import { use, useEffect, useState } from "react";
+import PhotoGrid from "@/components/PhotoGrid";
+import { deletePerson, fetchPerson, fetchPhotos } from "@/lib/api";
+import { formatPurityScore } from "@/lib/display";
+import type { Person, Photo } from "@/lib/types";
 import { useRouter } from "next/navigation";
 
 interface PageProps {
@@ -14,8 +14,7 @@ interface PageProps {
 
 export default function PersonPhotosPage({ params }: PageProps) {
   const { id } = use(params);
-  const personId = parseInt(id);
-
+  const personId = Number.parseInt(id, 10);
   const [person, setPerson] = useState<Person | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,6 +26,7 @@ export default function PersonPhotosPage({ params }: PageProps) {
     async function loadData() {
       setLoading(true);
       setError(null);
+
       try {
         const [personData, photosData] = await Promise.all([
           fetchPerson(personId),
@@ -34,17 +34,18 @@ export default function PersonPhotosPage({ params }: PageProps) {
         ]);
         setPerson(personData);
         setPhotos(photosData.items);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load person data");
+      } catch (caughtError) {
+        setError(caughtError instanceof Error ? caughtError.message : "Failed to load this cluster.");
       } finally {
         setLoading(false);
       }
     }
-    loadData();
+
+    void loadData();
   }, [personId]);
 
   const handleDelete = async () => {
-    if (!window.confirm(`Are you sure you want to dissolve the cluster for "${person?.name || "this person"}"? \n\nThis will remove the identity and unlink all photos. No photos will be deleted.`)) {
+    if (!window.confirm(`Dissolve "${person?.name || "this cluster"}"? Photos will remain, but the identity link will be removed.`)) {
       return;
     }
 
@@ -52,19 +53,19 @@ export default function PersonPhotosPage({ params }: PageProps) {
     try {
       await deletePerson(personId);
       router.push("/people");
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed to dissolve cluster");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Failed to dissolve the cluster.");
       setIsDeleting(false);
     }
   };
 
   if (loading) {
     return (
-      <div style={{ paddingTop: "var(--space-8)" }}>
-        <div className="skeleton" style={{ height: 40, width: 300, marginBottom: "var(--space-4)" }} />
+      <div className="route">
+        <div className="detail-hero skeleton" style={{ minHeight: 240 }} />
         <div className="photo-grid">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="photo-card skeleton" />
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="photo-card skeleton" />
           ))}
         </div>
       </div>
@@ -73,81 +74,74 @@ export default function PersonPhotosPage({ params }: PageProps) {
 
   if (error || !person) {
     return (
-      <div className="empty-state">
-        <div className="empty-state__title">Error</div>
-        <div className="empty-state__desc">{error || "Person not found"}</div>
-        <Link href="/people" className="btn btn--primary" style={{ marginTop: "var(--space-4)" }}>
-          Back to People
-        </Link>
+      <div className="route">
+        <div className="void-state">
+          <span className="panel__title">Cluster Unavailable</span>
+          <h2 className="panel__heading">This identity could not be loaded.</h2>
+          <p>{error || "The requested person was not found."}</p>
+          <Link href="/people" className="button button--primary">
+            Back to people
+          </Link>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ paddingTop: "var(--space-6)" }}>
-      <header style={{ marginBottom: "var(--space-6)" }}>
-        <Link 
-          href="/people" 
-          style={{ 
-            color: "var(--text-tertiary)", 
-            fontSize: "var(--text-sm)", 
-            display: "flex", 
-            alignItems: "center", 
-            gap: "var(--space-1)",
-            marginBottom: "var(--space-2)"
-          }}
-        >
-          ← Back to People
-        </Link>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
-          {person.cover_face_url && (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${person.cover_face_url}`}
-              alt={person.name ?? "person"}
-              style={{
-                width: 64,
-                height: 64,
-                borderRadius: "50%",
-                objectFit: "cover",
-                border: "2px solid var(--glass-border)"
-              }}
-            />
-          )}
-          <div>
-            <h1 className="page-title">{person.name || "Unnamed Person"}</h1>
-            <p className="page-subtitle">
-              {person.face_count} photo{person.face_count !== 1 ? "s" : ""} identified
-            </p>
+    <div className="route">
+      <Link href="/people" className="button button--ghost" style={{ width: "fit-content" }}>
+        Back to people
+      </Link>
+
+      <section className="detail-hero">
+        <div className="detail-hero__header">
+          <div className="person-card__lead">
+            <div className="detail-hero__portrait">
+              {person.cover_face_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${person.cover_face_url}`}
+                  alt={person.name ?? "Unnamed person"}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              ) : null}
+            </div>
+
+            <div className="detail-hero__identity">
+              <span className="panel__title">Identity Chapter</span>
+              <h1 className="page-title" style={{ fontSize: "clamp(2.4rem, 2rem + 1vw, 3.4rem)" }}>
+                {person.name || "Unnamed person"}
+              </h1>
+              <span className="detail-hero__meta">
+                {person.face_count} linked photo{person.face_count === 1 ? "" : "s"} · {formatPurityScore(person.purity_score)}
+              </span>
+            </div>
           </div>
-          <div style={{ marginLeft: "auto" }}>
-            <button 
-              className="btn" 
-              onClick={handleDelete}
-              disabled={isDeleting}
-              style={{ 
-                background: "rgba(255, 69, 58, 0.1)", 
-                color: "#ff453a",
-                border: "1px solid rgba(255, 69, 58, 0.2)",
-                padding: "10px 20px",
-                fontSize: "var(--text-sm)",
-                fontWeight: "var(--weight-bold)",
-                borderRadius: "var(--radius-lg)",
-                transition: "all 0.2s"
-              }}
-            >
-              {isDeleting ? "Dissolving..." : "Dissolve Cluster"}
-            </button>
-          </div>
+
+          <button
+            type="button"
+            className="button button--danger"
+            disabled={isDeleting}
+            onClick={() => void handleDelete()}
+          >
+            {isDeleting ? "Dissolving" : "Dissolve cluster"}
+          </button>
         </div>
-      </header>
+
+        <div className="detail-hero__facts">
+          <span className="meta-pill">Cluster review surface</span>
+          <span className="meta-pill">Linked memories · {photos.length}</span>
+          <span className="meta-pill">Identity refinement tools live on the roster</span>
+        </div>
+      </section>
 
       {photos.length > 0 ? (
         <PhotoGrid photos={photos} />
       ) : (
-        <div className="empty-state">
-          <div className="empty-state__title">No photos found</div>
-          <div className="empty-state__desc">This is unexpected. No photos are linked to this person cluster.</div>
+        <div className="void-state">
+          <span className="panel__title">No Linked Frames</span>
+          <h2 className="panel__heading">This identity currently has no visible photos.</h2>
+          <p>That usually means the cluster was recently modified and needs a fresh sync or review pass.</p>
         </div>
       )}
     </div>

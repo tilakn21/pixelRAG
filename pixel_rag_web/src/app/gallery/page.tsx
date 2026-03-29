@@ -1,37 +1,106 @@
-// pixel_rag_web/src/app/gallery/page.tsx
 "use client";
 
 import Link from "next/link";
+import AsciiField from "@/components/AsciiField";
 
-const CATEGORIES = [
-  { id: "all", name: "All Photos", icon: "🖼️", desc: "View your entire collection uncategorized.", color: "var(--cat-other)", link: "/photos" },
-  { id: "people", name: "People", icon: "👤", desc: "View all identified individuals.", color: "var(--cat-people)", link: "/people" },
-  { id: "landscape", name: "Landscapes", icon: "🏞️", desc: "Nature, mountains, and outdoors.", color: "var(--cat-landscape)", link: "/photos?category=landscape" },
-  { id: "food", name: "Food & Drink", icon: "🍔", desc: "Meals, dining, and ingredients.", color: "var(--cat-food)", link: "/photos?category=food" },
-  { id: "architecture", name: "Architecture", icon: "🏛️", desc: "Buildings, cities, and indoor scenes.", color: "var(--cat-architecture)", link: "/photos?category=architecture" },
-  { id: "document", name: "Documents", icon: "📄", desc: "Screenshots, receipts, and text.", color: "var(--cat-document)", link: "/photos?category=document" },
+const CHAPTERS = [
+  {
+    id: "all",
+    mark: "00",
+    title: "All Photos",
+    description: "The full archive, presented as a quiet scroll with minimal chrome.",
+    link: "/photos",
+  },
+  {
+    id: "people",
+    mark: "01",
+    title: "People",
+    description: "A face-led chapter for reviewing identity clusters and human patterns.",
+    link: "/people",
+  },
+  {
+    id: "landscape",
+    mark: "02",
+    title: "Landscapes",
+    description: "Open air, topography, weather, and atmosphere.",
+    link: "/photos?category=landscape",
+  },
+  {
+    id: "food",
+    mark: "03",
+    title: "Food & Drink",
+    description: "Meals, tables, ingredients, and convivial still life.",
+    link: "/photos?category=food",
+  },
+  {
+    id: "architecture",
+    mark: "04",
+    title: "Architecture",
+    description: "Civic geometry, interiors, facades, and quiet structure.",
+    link: "/photos?category=architecture",
+  },
+  {
+    id: "document",
+    mark: "05",
+    title: "Documents",
+    description: "Text-rich frames, receipts, notes, screenshots, and paper memory.",
+    link: "/photos?category=document",
+  },
 ];
 
 export default function GalleryHubPage() {
   return (
-    <div style={{ paddingTop: "var(--space-6)" }}>
-      <h1 className="page-title">Gallery</h1>
-      <p className="page-subtitle">Choose a category to explore your collection</p>
+    <div className="route">
+      <section className="route-hero route-hero--split">
+        <div className="title-block">
+          <span className="eyebrow">Curated Exhibition</span>
+          <h1 className="page-title">Move through the archive in chapters.</h1>
+          <p className="page-subtitle">
+            The gallery shifts PixelRAG away from dashboard categories and toward composed routes through the collection.
+          </p>
+        </div>
 
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-        gap: "var(--space-4)",
-        marginTop: "var(--space-6)"
-      }}>
-        {CATEGORIES.map((cat) => (
-          <Link key={cat.id} href={cat.link} className="category-card" style={{ borderTop: `4px solid ${cat.color}` }}>
-            <div className="category-card__icon">{cat.icon}</div>
-            <div className="category-card__title">{cat.name}</div>
-            <div className="category-card__desc">{cat.desc}</div>
-          </Link>
-        ))}
-      </div>
+        <AsciiField
+          className="hero-ascii"
+          variant="horizon"
+          tone="silver"
+          caption="Chapter breaks / negative space"
+          scale="hero"
+        />
+      </section>
+
+      <section className="gallery-layout">
+        <aside className="gallery-rail">
+          <div className="panel panel--quiet">
+            <span className="panel__title">Chapter Rail</span>
+            <div className="gallery-rail__nav">
+              {CHAPTERS.map((chapter) => (
+                <a key={chapter.id} href={`#${chapter.id}`} className="gallery-rail__link">
+                  <span>{chapter.title}</span>
+                  <span className="mono">{chapter.mark}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <div className="panel panel--quiet">
+            <span className="panel__title">Curation Note</span>
+            <p>
+              Each route keeps the imagery dominant while navigation and metadata stay restrained and low-noise.
+            </p>
+          </div>
+        </aside>
+
+        <div className="chapter-grid">
+          {CHAPTERS.map((chapter) => (
+            <Link key={chapter.id} id={chapter.id} href={chapter.link} className="category-plate">
+              <span className="category-plate__mark">{chapter.mark}</span>
+              <h3>{chapter.title}</h3>
+              <p>{chapter.description}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

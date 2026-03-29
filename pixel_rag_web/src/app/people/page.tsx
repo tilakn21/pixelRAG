@@ -1,10 +1,10 @@
-// pixel_rag_web/src/app/people/page.tsx
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import AsciiField from "@/components/AsciiField";
+import PersonCard from "@/components/PersonCard";
 import { fetchIdentities } from "@/lib/api";
 import type { Person } from "@/lib/types";
-import PersonCard from "@/components/PersonCard";
 
 export default function PeoplePage() {
   const [persons, setPersons] = useState<Person[]>([]);
@@ -16,78 +16,77 @@ export default function PeoplePage() {
     try {
       const data = await fetchIdentities();
       setPersons(data);
-    } catch {
-      // error silently
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadPersons();
+    void loadPersons();
   }, [loadPersons]);
 
-  const named = persons.filter((p) => p.confirmed);
-  const unnamed = persons.filter((p) => !p.confirmed);
-
-  // Sort unnamed by purity ascending (worst first — needs attention)
+  const named = persons.filter((person) => person.confirmed);
+  const unnamed = persons.filter((person) => !person.confirmed);
   const sortedUnnamed = [...unnamed].sort(
     (a, b) => (a.purity_score ?? 0) - (b.purity_score ?? 0)
   );
-
   const displayed = showUnnamedOnly ? sortedUnnamed : [...named, ...sortedUnnamed];
 
   return (
-    <div style={{ paddingTop: "var(--space-6)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-2)" }}>
-        <div>
-          <h1 className="page-title">People</h1>
-          <p className="page-subtitle">
-            {named.length} named · {unnamed.length} unnamed
-          </p>
-        </div>
-        <button
-          className={`pill ${showUnnamedOnly ? "pill--active" : ""}`}
-          onClick={() => setShowUnnamedOnly((v) => !v)}
-        >
-          Unnamed only
-        </button>
-      </div>
+    <div className="route">
+      <section className="route-hero route-hero--split">
+        <div className="stack">
+          <div className="title-block">
+            <span className="eyebrow">Canvas of Faces</span>
+            <h1 className="page-title">Review identity with space and clarity.</h1>
+            <p className="page-subtitle">
+              Named people stay calm and prominent. Ambiguous clusters surface separately so corrective work feels deliberate, not buried.
+            </p>
+          </div>
 
-      {/* Loading skeleton */}
-      {loading && (
-        <div>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div
-              key={i}
-              className="skeleton"
-              style={{ height: 100, marginBottom: "var(--space-3)", borderRadius: "var(--radius-lg)" }}
-            />
-          ))}
-        </div>
-      )}
+          <div className="route-meta">
+            <span className="meta-pill">{named.length} named</span>
+            <span className="meta-pill">{unnamed.length} unnamed</span>
+          </div>
 
-      {/* Empty state */}
-      {!loading && persons.length === 0 && (
-        <div className="empty-state">
-          <svg className="empty-state__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-            <circle cx="9" cy="7" r="4" />
-            <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-          </svg>
-          <div className="empty-state__title">No people found</div>
-          <div className="empty-state__desc">
-            Sync your photo library first. PixelRAG needs at least 3 photos of someone to identify them.
+          <div className="action-row">
+            <button
+              type="button"
+              className={`chip ${showUnnamedOnly ? "chip--active" : ""}`}
+              onClick={() => setShowUnnamedOnly((value) => !value)}
+            >
+              <span className="chip__mark">Filter</span>
+              <span>{showUnnamedOnly ? "Showing unnamed only" : "Show unnamed only"}</span>
+            </button>
           </div>
         </div>
-      )}
 
-      {/* Person cards */}
-      {!loading &&
-        displayed.map((person) => (
-          <PersonCard key={person.id} person={person} onUpdate={loadPersons} />
-        ))}
+        <AsciiField className="hero-ascii" variant="swirl" tone="cobalt" caption="Identity lattice / face clusters" scale="hero" />
+      </section>
+
+      {loading ? (
+        <section className="people-grid">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="person-card skeleton" style={{ minHeight: 240 }} />
+          ))}
+        </section>
+      ) : null}
+
+      {!loading && persons.length === 0 ? (
+        <div className="void-state">
+          <span className="panel__title">No People Yet</span>
+          <h2 className="panel__heading">The archive has not resolved any usable face clusters.</h2>
+          <p>Run a sync first, then return here to review identities after the analysis pass completes.</p>
+        </div>
+      ) : null}
+
+      {!loading && displayed.length > 0 ? (
+        <section className="people-grid">
+          {displayed.map((person) => (
+            <PersonCard key={person.id} person={person} onUpdate={loadPersons} />
+          ))}
+        </section>
+      ) : null}
     </div>
   );
 }

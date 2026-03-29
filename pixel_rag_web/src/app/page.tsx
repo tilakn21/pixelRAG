@@ -1,11 +1,39 @@
-// pixel_rag_web/src/app/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchHealth, setLibraryPath } from "@/lib/api";
-import type { HealthResponse } from "@/lib/types";
 import { useRouter } from "next/navigation";
+import AsciiField from "@/components/AsciiField";
 import SearchBar from "@/components/SearchBar";
+import { fetchHealth, setLibraryPath } from "@/lib/api";
+import { formatCompactNumber, formatLibraryLabel } from "@/lib/display";
+import type { HealthResponse } from "@/lib/types";
+
+const NAVIGATORS = [
+  {
+    href: "/search",
+    mark: "Search",
+    title: "AI Symphony",
+    description: "Search the archive in natural language and let intent resolve into imagery.",
+  },
+  {
+    href: "/photos",
+    mark: "Archive",
+    title: "Endless Archive",
+    description: "Move through the full image index with quiet chrome and deeper metadata on demand.",
+  },
+  {
+    href: "/people",
+    mark: "Faces",
+    title: "Canvas of Faces",
+    description: "Review identities, resolve mixed clusters, and refine the people index with care.",
+  },
+  {
+    href: "/gallery",
+    mark: "Curate",
+    title: "Curated Exhibition",
+    description: "Browse the collection by composed chapters instead of flat utility categories.",
+  },
+];
 
 export default function HomePage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -16,159 +44,169 @@ export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Check if we just swapped library
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       if (url.searchParams.get("switched") === "true") {
         setIsSwitched(true);
-        // Clear param without reload
         window.history.replaceState({}, "", "/");
       }
     }
 
     fetchHealth()
       .then(setHealth)
-      .catch(() => setError("Unable to connect to PixelRAG Backend. Ensure the FastAPI server is running."));
+      .catch(() => {
+        setError("PixelRAG could not reach the backend. Start the FastAPI service, then refresh.");
+      });
   }, []);
 
-  const handleSetup = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSetup = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!libraryInput.trim()) return;
+
     setSetupSaving(true);
     setError(null);
     try {
       await setLibraryPath(libraryInput.trim());
-      // A hard reload is the safest way to clear all browser caches (lists, thumbs) 
-      // when the entire backend database context has swapped.
       window.location.href = "/?switched=true";
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to set library path");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Failed to connect this folder.");
     } finally {
       setSetupSaving(false);
     }
   };
 
-  const libraryName = health?.library_path ? health.library_path : "No folder connected";
-
   return (
-    <div style={{ paddingTop: "var(--space-10)", paddingBottom: "var(--space-10)", maxWidth: 800, margin: "0 auto", textAlign: "center" }}>
-      
-      {/* Success Notification */}
-      {isSwitched && (
-        <div style={{ 
-          margin: "0 auto var(--space-6)", maxWidth: 500, padding: "var(--space-4)", 
-          background: "var(--accent-glow)", border: "1px solid var(--accent-primary)",
-          borderRadius: "var(--radius-md)", color: "var(--accent-primary)", fontWeight: "bold",
-          display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: "var(--space-2)"
-        }}>
-          ✅ Library Updated! 
-          {health?.photo_count === 0 && (
-            <button 
-              onClick={() => router.push("/sync")} 
-              style={{ textDecoration: "underline", background: "none", border: "none", color: "inherit", cursor: "pointer", fontWeight: "inherit" }}
-            >
-               Run your first sync to index photos →
-            </button>
-          )}
-        </div>
-      )}
+    <div className="route">
+      <section className="route-hero">
+        {isSwitched ? (
+          <div className="status-banner">
+            <strong>Library updated.</strong>
+            <span className="mono">The archive context has been refreshed for this workspace.</span>
+          </div>
+        ) : null}
 
-      {/* Hero Section */}
-      <h1 className="page-title" style={{ fontSize: "3rem", marginBottom: "var(--space-2)" }}>Your Life in Focus.</h1>
-      <p className="page-subtitle" style={{ fontSize: "1.25rem", maxWidth: 500, margin: "0 auto var(--space-8)" }}>
-        Private AI Photo Intelligence. Search, index, and explore your photo libraries, 100% offline.
-      </p>
+        {error ? (
+          <div className="status-banner status-banner--error">
+            <strong>Connection issue</strong>
+            <span>{error}</span>
+          </div>
+        ) : null}
 
-      {/* Central Interactive Block */}
-      <div style={{ padding: "0 var(--space-4)", marginBottom: "var(--space-10)" }}>
-        {/* Simple Search Shortcut */}
-        <div style={{ marginBottom: "var(--space-6)" }}>
-           <button 
-             onClick={() => router.push("/search")}
-             style={{
-               width: "100%", maxWidth: "600px", background: "white", padding: "16px 24px", 
-               borderRadius: "var(--radius-full)", border: "1px solid var(--border-medium)",
-               display: "flex", alignItems: "center", gap: "var(--space-3)", 
-               color: "var(--text-tertiary)", fontSize: "var(--text-lg)",
-               boxShadow: "0 8px 24px rgba(62, 39, 35, 0.08)", cursor: "text"
-             }}
-           >
-             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-             </svg>
-             Search your memories... 
-           </button>
-        </div>
+        <div className="hero-grid">
+          <div className="stack">
+            <div className="title-block">
+              <span className="eyebrow">Silent Index</span>
+              <h1 className="page-title">A quieter way to search memory.</h1>
+              <p className="page-subtitle">
+                PixelRAG now reads like a gallery-lab: light, exact, and led by the image instead of the interface.
+              </p>
+            </div>
 
-        <button 
-          className="btn btn--primary" 
-          onClick={() => router.push("/gallery")}
-          style={{ padding: "16px 40px", fontSize: "var(--text-lg)", borderRadius: "var(--radius-full)" }}
-        >
-          Open Gallery Hub
-        </button>
-      </div>
+            <SearchBar
+              onSearch={(query) => router.push(`/search?query=${encodeURIComponent(query)}`)}
+              initialValue=""
+            />
 
-      <div style={{ borderTop: "1px solid var(--border-medium)", margin: "var(--space-8) 0", opacity: 0.5 }} />
-
-      {/* Folders & System Status */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "var(--space-4)", textAlign: "left" }}>
-        
-        {/* Connected Library */}
-        <div className="glass" style={{ padding: "var(--space-6)", borderRadius: "var(--radius-md)" }}>
-          <h2 style={{ fontSize: "var(--text-lg)", marginBottom: "var(--space-2)" }}>Connected Library</h2>
-          
-          <div style={{ 
-            fontFamily: "monospace", padding: "var(--space-3)", 
-            background: "var(--bg-secondary)", borderRadius: "var(--radius-sm)",
-            fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: "var(--space-4)",
-            wordBreak: "break-all"
-          }}>
-            📁 {libraryName}
+            <div className="route-meta">
+              <span className="meta-pill">Local-first intelligence</span>
+              <span className="meta-pill">Photography remains the hero</span>
+              <span className="meta-pill">Structured around search and curation</span>
+            </div>
           </div>
 
-          <form onSubmit={handleSetup} style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
-            <input
-              className="input"
-              value={libraryInput}
-              onChange={(e) => setLibraryInput(e.target.value)}
-              placeholder="/Users/yourname/Photos..."
-              style={{ flex: 1, minWidth: 200 }}
-              disabled={setupSaving}
-            />
-            <button type="submit" className="btn btn--secondary" disabled={setupSaving || !libraryInput.trim()}>
-              {setupSaving ? "Switching..." : "Add / Switch Folder"}
-            </button>
-          </form>
-          {error && <div className="error-banner" style={{ marginTop: "var(--space-2)" }}>{error}</div>}
+          <AsciiField
+            className="hero-ascii"
+            variant="iris"
+            tone="cobalt"
+            caption="Optical field / live archive"
+            scale="hero"
+          />
         </div>
+      </section>
 
-        {/* Quick Stats Summary */}
-        <div className="glass" style={{ padding: "var(--space-6)", borderRadius: "var(--radius-md)" }}>
-          <h2 style={{ fontSize: "var(--text-lg)", marginBottom: "var(--space-4)" }}>Library Analytics</h2>
-          {health ? (
-             <div style={{ display: "flex", gap: "var(--space-4)", flexWrap: "wrap" }}>
-                <div style={{ flex: 1, background: "var(--bg-primary)", padding: "var(--space-4)", borderRadius: "var(--radius-sm)", textAlign: "center", border: "1px solid var(--border-subtle)" }}>
-                   <div style={{ fontSize: "var(--text-2xl)", fontWeight: "bold", color: "var(--accent-red)" }}>{health.photo_count}</div>
-                   <div style={{ fontSize: "var(--text-xs)", textTransform: "uppercase", color: "var(--text-secondary)", fontWeight: "bold", letterSpacing: "1px" }}>Photos</div>
-                </div>
-                <div style={{ flex: 1, background: "var(--bg-primary)", padding: "var(--space-4)", borderRadius: "var(--radius-sm)", textAlign: "center", border: "1px solid var(--border-subtle)" }}>
-                   <div style={{ fontSize: "var(--text-2xl)", fontWeight: "bold", color: "var(--accent-yellow)" }}>{health.person_count}</div>
-                   <div style={{ fontSize: "var(--text-xs)", textTransform: "uppercase", color: "var(--text-secondary)", fontWeight: "bold", letterSpacing: "1px" }}>Identities</div>
-                </div>
-             </div>
-          ) : (
-            <div style={{ color: "var(--text-tertiary)" }}>Loading metrics...</div>
-          )}
-          <br/>
-          <button className="btn btn--secondary" style={{ width: "100%" }} onClick={() => router.push("/photos")}>
-             View All Photos
+      <section className="metric-grid">
+        <article className="metric-card">
+          <span className="metric-card__label">Photos</span>
+          <div className="metric-card__value">{formatCompactNumber(health?.photo_count)}</div>
+          <div className="metric-card__foot">Indexed frames inside the active library</div>
+        </article>
+
+        <article className="metric-card">
+          <span className="metric-card__label">Identified People</span>
+          <div className="metric-card__value">{formatCompactNumber(health?.person_count)}</div>
+          <div className="metric-card__foot">Clusters ready for review and naming</div>
+        </article>
+      </section>
+
+      <section className="surface-grid">
+        <article className="panel panel--accent">
+          <div className="panel__header">
+            <div>
+              <span className="panel__title">Connected Library</span>
+              <h2 className="panel__heading">{formatLibraryLabel(health?.library_path)}</h2>
+            </div>
+            <span className="meta-pill">Active archive</span>
+          </div>
+
+          <div className="stack">
+            <p className="mono">{health?.library_path ?? "No library connected yet."}</p>
+
+            <form className="form-stack" onSubmit={handleSetup}>
+              <input
+                className="input input--mono"
+                value={libraryInput}
+                onChange={(event) => setLibraryInput(event.target.value)}
+                placeholder="/Users/yourname/Photos"
+                disabled={setupSaving}
+              />
+              <div className="action-row">
+                <button
+                  type="submit"
+                  className="button button--primary"
+                  disabled={setupSaving || !libraryInput.trim()}
+                >
+                  {setupSaving ? "Switching" : "Switch library"}
+                </button>
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  onClick={() => router.push("/photos")}
+                >
+                  Open archive
+                </button>
+              </div>
+            </form>
+          </div>
+        </article>
+
+        <article className="panel panel--quiet">
+          <span className="panel__title">System View</span>
+          <h2 className="panel__heading">Everything orbits around search.</h2>
+          <p>
+            The redesigned product keeps the photography central, reduces chrome, and lets metadata appear only when it clarifies meaning.
+          </p>
+          <div className="route-meta">
+            <span className="meta-pill">Search is the emotional anchor</span>
+            <span className="meta-pill">Metadata lives in calm monospace</span>
+            <span className="meta-pill">ASCII acts as signal, not decoration</span>
+          </div>
+        </article>
+      </section>
+
+      <section className="cta-grid">
+        {NAVIGATORS.map((item) => (
+          <button
+            key={item.href}
+            type="button"
+            className="cta-card"
+            onClick={() => router.push(item.href)}
+          >
+            <span className="cta-card__mark">{item.mark}</span>
+            <h3>{item.title}</h3>
+            <p>{item.description}</p>
           </button>
-        </div>
-
-      </div>
-
+        ))}
+      </section>
     </div>
   );
 }

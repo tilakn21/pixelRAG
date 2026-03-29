@@ -1,4 +1,57 @@
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env_venv/
+ENV/
+
+# User-specific / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Next.js / Node.js (Frontend) ---
+node_modules/
+pixel_rag_web/node_modules/
+pixel_rag_web/.next/
+pixel_rag_web/out/
+.next/
+out/
+build/
+.pnp
+.pnp.js
+
+# npm / yarn / pnpm logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Environment Variables ---
 .env
-/data
-__pycache__
-.gitignore
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# --- Project Specific database & data ---
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
+/testphoto/

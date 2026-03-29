@@ -1,17 +1,17 @@
-// pixel_rag_web/src/app/page.tsx
 "use client";
 
-import { useCallback, useEffect, useState, Suspense } from "react";
-import { fetchHealth, fetchSyncStatus, startSync, setLibraryPath } from "@/lib/api";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import type { HealthResponse, SyncStatus } from "@/lib/types";
+import AsciiField from "@/components/AsciiField";
 import CategoryPills from "@/components/CategoryPills";
 import PhotoGrid from "@/components/PhotoGrid";
+import { fetchHealth, fetchSyncStatus, setLibraryPath, startSync } from "@/lib/api";
+import { formatLibraryLabel } from "@/lib/display";
+import type { HealthResponse, SyncStatus } from "@/lib/types";
 
-function GalleryContent() {
+function ArchiveContent() {
   const searchParams = useSearchParams();
   const initialCategory = searchParams.get("category");
-  
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<string | null>(initialCategory);
@@ -21,56 +21,60 @@ function GalleryContent() {
   const [setupSaving, setSetupSaving] = useState(false);
   const [isEditingFolder, setIsEditingFolder] = useState(false);
 
-  // Fetch health on mount
   useEffect(() => {
     fetchHealth()
       .then(setHealth)
-      .catch(() => setError("Backend is not running. Start the FastAPI server and refresh."));
+      .catch(() => {
+        setError("PixelRAG could not reach the backend. Start the FastAPI service, then refresh.");
+      });
   }, []);
 
-  // Poll sync status while syncing
   useEffect(() => {
     if (!syncing) return;
-    const interval = setInterval(async () => {
+
+    const interval = window.setInterval(async () => {
       try {
         const status = await fetchSyncStatus();
         setSyncStatus(status);
+
         if (status.status === "complete" || status.status === "error") {
           setSyncing(false);
           if (status.status === "complete") {
-            // Refresh health to get updated counts
-            fetchHealth().then(setHealth);
+            const refreshed = await fetchHealth();
+            setHealth(refreshed);
           }
         }
       } catch {
-        // ignore polling errors
+        setSyncing(false);
       }
     }, 2000);
-    return () => clearInterval(interval);
+
+    return () => window.clearInterval(interval);
   }, [syncing]);
 
   const handleSync = useCallback(async () => {
+    setError(null);
     try {
       await startSync();
       setSyncing(true);
-      setSyncStatus({ 
-        status: "running", 
-        progress: 0, 
-        current_file: "Initiating...", 
-        photos_processed: 0, 
-        photos_total: 0, 
+      setSyncStatus({
+        status: "running",
+        progress: 0,
+        current_file: "Initializing pipeline",
+        photos_processed: 0,
+        photos_total: 0,
         error_message: null,
-        logs: ["Starting sync pipeline..."] 
+        logs: ["Preparing archive scan...", "Activating indexing pipeline..."],
       });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Sync failed";
-      setError(msg);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Sync could not start.");
     }
   }, []);
 
-  const handleSetup = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSetup = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!libraryInput.trim()) return;
+
     setSetupSaving(true);
     setError(null);
     try {
@@ -78,218 +82,203 @@ function GalleryContent() {
       const newHealth = await fetchHealth();
       setHealth(newHealth);
       setIsEditingFolder(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to set library path");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Failed to set library.");
     } finally {
       setSetupSaving(false);
     }
   };
 
-  const libraryName = health?.library_path ? health.library_path.split("/").pop() : "Library";
-
-  // Error state: backend unreachable
-  if (error) {
+  if (error && !health) {
     return (
-      <div style={{ paddingTop: "var(--space-8)" }}>
-        <div className="error-banner">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          {error}
-          <button className="btn btn--secondary" style={{ marginLeft: "auto" }} onClick={() => window.location.reload()}>
-            Retry
-          </button>
+      <div className="route">
+        <div className="status-banner status-banner--error">
+          <strong>Connection issue</strong>
+          <span>{error}</span>
         </div>
       </div>
     );
   }
 
-  // Setup required state
   if (health && health.status === "setup_required") {
     return (
-      <div className="empty-state">
-        <svg className="empty-state__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          <line x1="12" y1="11" x2="12" y2="17" />
-          <line x1="9" y1="14" x2="15" y2="14" />
-        </svg>
-        <div className="empty-state__title">Setup Required</div>
-        <div className="empty-state__desc">
-          Please enter the absolute path to the directory containing your photos.
-        </div>
-        <form onSubmit={handleSetup} style={{ width: "100%", maxWidth: 400, marginTop: "var(--space-4)" }}>
-          <input
-            className="input"
-            value={libraryInput}
-            onChange={(e) => setLibraryInput(e.target.value)}
-            placeholder="/Users/tilakneema/Photos..."
-            style={{ marginBottom: "var(--space-3)" }}
-            disabled={setupSaving}
-          />
-          <button type="submit" className="btn btn--primary" style={{ width: "100%", justifyContent: "center" }} disabled={setupSaving}>
-            {setupSaving ? "Saving..." : "Set Library Path"}
-          </button>
-        </form>
-        {error && (
-          <div className="error-banner" style={{ marginTop: "var(--space-4)", width: "100%", maxWidth: 400 }}>
-            {error}
+      <div className="route">
+        <section className="route-hero route-hero--split">
+          <div className="title-block">
+            <span className="eyebrow">Endless Archive</span>
+            <h1 className="page-title">Connect a photo library to begin.</h1>
+            <p className="page-subtitle">
+              PixelRAG needs an absolute path to the folder you want indexed locally.
+            </p>
           </div>
-        )}
+          <AsciiField className="hero-ascii" variant="horizon" tone="silver" caption="Awaiting source imagery" scale="hero" />
+        </section>
+
+        <section className="panel panel--accent">
+          <form className="form-stack" onSubmit={handleSetup}>
+            <input
+              className="input input--mono"
+              value={libraryInput}
+              onChange={(event) => setLibraryInput(event.target.value)}
+              placeholder="/Users/yourname/Photos"
+              disabled={setupSaving}
+            />
+            <button type="submit" className="button button--primary" disabled={setupSaving || !libraryInput.trim()}>
+              {setupSaving ? "Saving" : "Set library path"}
+            </button>
+          </form>
+        </section>
       </div>
     );
   }
 
-  // Empty state: no photos
   if (health && health.photo_count === 0) {
     return (
-      <div className="empty-state">
-        <svg className="empty-state__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-          <circle cx="8.5" cy="8.5" r="1.5" />
-          <polyline points="21 15 16 10 5 21" />
-        </svg>
-        <div className="empty-state__title">No photos yet</div>
-        <div className="empty-state__desc">
-          Your photo directory has been targeted. Sync to start exploring.
-        </div>
-        <button className="btn btn--primary" onClick={handleSync} disabled={syncing}>
-          {syncing ? (
-            <><div className="spinner" /> Syncing...</>
-          ) : (
-            "Start Sync"
-          )}
-        </button>
+      <div className="route">
+        <section className="route-hero route-hero--split">
+          <div className="title-block">
+            <span className="eyebrow">Endless Archive</span>
+            <h1 className="page-title">The archive is connected but still empty.</h1>
+            <p className="page-subtitle">
+              Run the first sync to decode thumbnails, extract structure, and make the collection searchable.
+            </p>
+            <div className="hero-actions">
+              <button type="button" className="button button--primary" onClick={() => void handleSync()} disabled={syncing}>
+                {syncing ? "Syncing" : "Start first sync"}
+              </button>
+            </div>
+          </div>
+          <AsciiField className="hero-ascii" variant="wave" tone="cobalt" caption="Archive warm-up / decode pass" scale="hero" />
+        </section>
+
+        {syncing && syncStatus ? (
+          <section className="status-console">
+            <div className="status-console__header">
+              <div>
+                <span className="status-console__label">Sync activity</span>
+                <h2 className="panel__heading">{syncStatus.current_file ?? "Processing"}</h2>
+              </div>
+              <span className="meta-pill">{syncStatus.progress}%</span>
+            </div>
+            <div className="status-console__track">
+              <div className="status-console__bar" style={{ width: `${syncStatus.progress}%` }} />
+            </div>
+            <div className="status-console__log">
+              {(syncStatus.logs ?? []).slice(-10).reverse().map((log) => (
+                <span key={log}>{log}</span>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div style={{ paddingTop: "var(--space-6)" }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-2)" }}>
-        <div>
-          <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-            {libraryName}
-            <button 
+    <div className="route">
+      <section className="route-hero route-hero--split">
+        <div className="stack">
+          <div className="title-block">
+            <span className="eyebrow">Endless Archive</span>
+            <h1 className="page-title">{formatLibraryLabel(health?.library_path)}</h1>
+            <p className="page-subtitle">
+              Browse the full index with quiet filters, inline sync visibility, and metadata only when it helps.
+            </p>
+          </div>
+
+          <div className="route-meta">
+            <span className="meta-pill">{health?.photo_count ?? 0} photos</span>
+            <span className="meta-pill">{health?.person_count ?? 0} people</span>
+            {category ? <span className="meta-pill">Category · {category}</span> : null}
+          </div>
+
+          <div className="hero-actions">
+            <button type="button" className="button button--primary" onClick={() => void handleSync()} disabled={syncing}>
+              {syncing ? "Syncing archive" : "Sync archive"}
+            </button>
+            <button
+              type="button"
+              className="button button--secondary"
               onClick={() => {
                 setLibraryInput(health?.library_path ?? "");
-                setIsEditingFolder(!isEditingFolder);
+                setIsEditingFolder((value) => !value);
               }}
-              style={{ color: "var(--text-tertiary)", padding: "4px", display: "flex" }}
-              title="Change Folder"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-              </svg>
+              {isEditingFolder ? "Hide library editor" : "Edit library path"}
             </button>
-          </h1>
-          <p className="page-subtitle">
-            {health?.photo_count ?? "—"} photos · {health?.person_count ?? 0} people
-          </p>
+          </div>
         </div>
-        <button className="btn btn--primary" onClick={handleSync} disabled={syncing}>
-          {syncing ? (
-            <><div className="spinner" /> Syncing</>
-          ) : (
-            <>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <polyline points="23 4 23 10 17 10" />
-                <polyline points="1 20 1 14 7 14" />
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-              </svg>
-              Sync
-            </>
-          )}
-        </button>
-      </div>
 
-      {/* Detailed Sync Console */}
-      {syncing && syncStatus && (
-        <div className="glass" style={{ 
-          padding: "var(--space-4)", 
-          marginBottom: "var(--space-6)", 
-          borderRadius: "var(--radius-lg)",
-          background: "rgba(0,0,0,0.05)",
-          border: "1px solid var(--border-medium)"
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "var(--space-2)", fontSize: "var(--text-xs)", fontWeight: "bold", textTransform: "uppercase", letterSpacing: "1px" }}>
-            <span>Pipeline Activity</span>
-            <span>{syncStatus.progress}%</span>
-          </div>
-          
-          {/* Progress Bar */}
-          <div style={{ height: 6, background: "rgba(0,0,0,0.1)", borderRadius: 3, marginBottom: "var(--space-4)", overflow: "hidden" }}>
-             <div style={{ height: "100%", width: `${syncStatus.progress}%`, background: "var(--accent-primary)", transition: "width 0.5s ease-out" }} />
+        <AsciiField className="hero-ascii" variant="wave" tone="silver" caption="Live archive / infinite sequence" scale="hero" />
+      </section>
+
+      {error ? (
+        <div className="status-banner status-banner--error">
+          <strong>Archive issue</strong>
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {syncStatus && syncing ? (
+        <section className="status-console">
+          <div className="status-console__header">
+            <div>
+              <span className="status-console__label">Pipeline Activity</span>
+              <h2 className="panel__heading">{syncStatus.current_file ?? "Scanning library"}</h2>
+            </div>
+            <span className="meta-pill">{syncStatus.progress}%</span>
           </div>
 
-          <div 
-            style={{ 
-              height: 120, 
-              overflowY: "auto", 
-              fontFamily: "monospace", 
-              fontSize: "12px", 
-              lineHeight: "1.6",
-              color: "var(--text-secondary)",
-              display: "flex",
-              flexDirection: "column-reverse" // Shows newest at bottom and keeps scroll there
-            }}
-          >
-            {(syncStatus.logs || []).slice().reverse().map((log, i) => (
-              <div key={i} style={{ marginBottom: "2px" }}>
-                {log.startsWith("✅") || log.startsWith("🎉") ? (
-                  <span style={{ color: "#2e7d32" }}>{log}</span>
-                ) : log.startsWith("❌") || log.startsWith("⚠️") ? (
-                  <span style={{ color: "#c62828" }}>{log}</span>
-                ) : (
-                  <span>{log}</span>
-                )}
-              </div>
+          <div className="status-console__meta">
+            <span>{syncStatus.photos_processed} processed</span>
+            <span>{syncStatus.photos_total} total frames</span>
+            <span>{syncStatus.status}</span>
+          </div>
+
+          <div className="status-console__track">
+            <div className="status-console__bar" style={{ width: `${syncStatus.progress}%` }} />
+          </div>
+
+          <div className="status-console__log">
+            {(syncStatus.logs ?? []).slice(-12).reverse().map((log) => (
+              <span key={log}>{log}</span>
             ))}
           </div>
-        </div>
-      )}
+        </section>
+      ) : null}
 
-      {/* Edit Folder Form */}
-      {isEditingFolder && (
-        <form onSubmit={handleSetup} style={{ marginBottom: "var(--space-4)", padding: "var(--space-4)", background: "var(--bg-glass-subtle)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border-subtle)" }}>
-          <label style={{ display: "block", marginBottom: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--text-secondary)", fontWeight: "var(--weight-medium)" }}>
-            Absolute Path to Photo Directory
-          </label>
-          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+      {isEditingFolder ? (
+        <section className="panel panel--quiet">
+          <span className="panel__title">Library Editor</span>
+          <form className="form-inline" onSubmit={handleSetup}>
             <input
-              className="input"
+              className="input input--mono"
               value={libraryInput}
-              onChange={(e) => setLibraryInput(e.target.value)}
-              placeholder="/Users/yourname/Photos..."
+              onChange={(event) => setLibraryInput(event.target.value)}
+              placeholder="/Users/yourname/Photos"
               disabled={setupSaving}
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 280 }}
             />
-            <button type="submit" className="btn btn--primary" disabled={setupSaving}>
-              {setupSaving ? "Saving..." : "Save"}
+            <button type="submit" className="button button--primary" disabled={setupSaving || !libraryInput.trim()}>
+              {setupSaving ? "Saving" : "Save path"}
             </button>
-          </div>
-          {error && <div className="error-banner" style={{ marginTop: "var(--space-2)" }}>{error}</div>}
-        </form>
-      )}
+          </form>
+        </section>
+      ) : null}
 
-      {/* Category pills */}
-      <CategoryPills active={category} onSelect={setCategory} />
+      <section className="archive-toolbar">
+        <CategoryPills active={category} onSelect={setCategory} />
+      </section>
 
-      {/* Photo grid */}
-      <div style={{ marginTop: "var(--space-4)" }}>
-        <PhotoGrid key={category ?? "all"} category={category} />
-      </div>
+      <PhotoGrid key={category ?? "all"} category={category} />
     </div>
   );
 }
 
 export default function GalleryPage() {
   return (
-    <Suspense fallback={<div className="spinner" style={{margin: "40px auto"}}></div>}>
-      <GalleryContent />
+    <Suspense fallback={<div className="spinner" style={{ margin: "40px auto" }} />}>
+      <ArchiveContent />
     </Suspense>
   );
 }
