@@ -37,6 +37,7 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
         const params: Record<string, string | number> = {
           page: targetPage,
           page_size: 50,
+          libHash: libHash,
         };
 
         if (category) {
@@ -51,7 +52,7 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
         setLoading(false);
       }
     },
-    [category, isPaginated]
+    [category, isPaginated, libHash]
   );
 
   const loadMore = useCallback(async () => {
@@ -61,7 +62,7 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
 
   useEffect(() => {
     fetchHealth()
-      .then((health) => setLibHash(health.lib_hash))
+      .then((health) => setLibHash(`${health.lib_hash}_${health.sync_version}`))
       .catch(() => {});
   }, []);
 
@@ -163,6 +164,7 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
           <PhotoCard
             key={photo.id}
             photo={photo}
+            matchedFaceId={photo.matched_face_id}
             onClick={() => {
               setLightboxIdx(index);
               setShowDetails(false);
@@ -288,7 +290,7 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
                 <div className="detail-card">
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span className="lightbox__label" style={{ margin: 0 }}>AI Confidence</span>
-                    <span style={{ fontFamily: "var(--font-pixel)", color: "var(--electric-purple)" }}>{(activePhoto.scene_confidence || 0 * 100).toFixed(1)}%</span>
+                    <span style={{ fontFamily: "var(--font-pixel)", color: "var(--electric-purple)" }}>{((activePhoto.scene_confidence || 0) * 100).toFixed(1)}%</span>
                   </div>
                   <div className="confidence-meter">
                     <div className="confidence-bar" style={{ width: `${(activePhoto.scene_confidence || 0) * 100}%` }} />

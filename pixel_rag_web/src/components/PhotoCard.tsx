@@ -9,9 +9,10 @@ interface PhotoCardProps {
   photo: Photo;
   onClick: () => void;
   libHash?: string;
+  matchedFaceId?: number | null;
 }
 
-export default function PhotoCard({ photo, onClick, libHash }: PhotoCardProps) {
+export default function PhotoCard({ photo, onClick, libHash, matchedFaceId }: PhotoCardProps) {
   return (
     <button 
       className="photo-card" 
@@ -35,20 +36,52 @@ export default function PhotoCard({ photo, onClick, libHash }: PhotoCardProps) {
           transform: translate(-4px, -4px);
           box-shadow: 6px 6px 0px var(--obsidian);
         }
+        .face-inset {
+           position: absolute;
+           bottom: 12px;
+           right: 12px;
+           width: 64px;
+           height: 64px;
+           border: 3px solid var(--sun-yellow);
+           border-radius: 8px;
+           background: #000;
+           box-shadow: 4px 4px 0px rgba(0,0,0,0.5);
+           overflow: hidden;
+           z-index: 10;
+        }
       `}</style>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         className="photo-card__image"
-        src={getThumbUrl(photo.id, 800, libHash)}
+        src={photo.thumbnail_url ? `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${photo.thumbnail_url}` : getThumbUrl(photo.id, 800, libHash)}
         alt={photo.filename}
         loading="lazy"
         style={{ width: "100%", display: "block", transition: "opacity 0.2s" }}
       />
+
+      {/* Identity Inset Alignment */}
+      {matchedFaceId && (
+        <div className="face-inset">
+           {/* eslint-disable-next-line @next/next/no-img-element */}
+           <img 
+              src={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/media/face/${matchedFaceId}?h=${libHash || photo.lib_hash || ""}`}
+              alt="Identity match"
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+           />
+        </div>
+      )}
       
       <div className="photo-card__topline" style={{ position: "absolute", top: "12px", left: "12px", right: "12px", display: "flex", justifyContent: "space-between", pointerEvents: "none" }}>
-        <span style={{ background: "var(--electric-blue)", color: "#fff", fontFamily: "var(--font-pixel)", fontSize: "0.7rem", padding: "4px 8px", borderRadius: "4px", textTransform: "uppercase", border: "1px solid #000" }}>
-          {formatSceneCategory(photo.scene_category)}
-        </span>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <span style={{ background: "var(--electric-blue)", color: "#fff", fontFamily: "var(--font-pixel)", fontSize: "0.7rem", padding: "4px 8px", borderRadius: "4px", textTransform: "uppercase", border: "1px solid #000" }}>
+            {formatSceneCategory(photo.scene_category)}
+          </span>
+          {photo.semantic_score != null && (
+            <span style={{ background: "var(--neon-green)", color: "#000", fontFamily: "var(--font-pixel)", fontSize: "0.7rem", padding: "4px 8px", borderRadius: "4px", border: "1px solid #000", fontWeight: "bold" }}>
+              {(photo.semantic_score * 100).toFixed(1)}% MATCH
+            </span>
+          )}
+        </div>
         {photo.has_faces ? (
           <span style={{ background: "var(--sun-yellow)", color: "#000", fontFamily: "var(--font-pixel)", fontSize: "0.7rem", padding: "4px 8px", borderRadius: "4px", textTransform: "uppercase", border: "1px solid #000" }}>
             IDENTITY_RESOLVED

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import {
+  deletePerson,
   fetchPersonFaces,
   fetchSimilarPersons,
   getFaceUrl,
@@ -16,9 +17,13 @@ import type { Person } from "@/lib/types";
 interface PersonCardProps {
   person: Person;
   onUpdate: () => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelect?: () => void;
+  libHash?: string;
 }
 
-export default function PersonCard({ person, onUpdate }: PersonCardProps) {
+export default function PersonCard({ person, onUpdate, selectable, selected, onSelect, libHash }: PersonCardProps) {
   const [editing, setEditing] = useState(!person.confirmed);
   const [nameInput, setNameInput] = useState(person.name ?? "");
   const [saving, setSaving] = useState(false);
@@ -30,6 +35,7 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
   const [allFaces, setAllFaces] = useState<number[]>([]);
   const [selectedFaces, setSelectedFaces] = useState<Set<number>>(new Set());
   const [splitting, setSplitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const badgeClass =
     person.quality === "good"
@@ -50,47 +56,47 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
 
     setSaving(true);
     try {
-      await renamePerson(person.id, nameInput.trim());
+      await renamePerson(person.id, nameInput.trim(), libHash);
       setEditing(false);
       onUpdate();
     } finally {
       setSaving(false);
     }
-  }, [nameInput, onUpdate, person.id]);
+  }, [nameInput, onUpdate, person.id, libHash]);
 
   const handleMergeOpen = useCallback(async () => {
     setMergeOpen(true);
     try {
-      const similar = await fetchSimilarPersons(person.id);
+      const similar = await fetchSimilarPersons(person.id, libHash);
       setSimilarPersons(similar);
     } catch {
       setSimilarPersons([]);
     }
-  }, [person.id]);
+  }, [person.id, libHash]);
 
   const handleMerge = useCallback(
     async (sourceId: number) => {
       setMerging(true);
       try {
-        await mergePersons(person.id, sourceId);
+        await mergePersons(person.id, sourceId, libHash);
         setMergeOpen(false);
         onUpdate();
       } finally {
         setMerging(false);
       }
     },
-    [onUpdate, person.id]
+    [onUpdate, person.id, libHash]
   );
 
   const handleSplitOpen = useCallback(async () => {
     setSplitOpen(true);
     try {
-      const data = await fetchPersonFaces(person.id);
+      const data = await fetchPersonFaces(person.id, libHash);
       setAllFaces(data.face_ids);
     } catch {
       setAllFaces([]);
     }
-  }, [person.id]);
+  }, [person.id, libHash]);
 
   const toggleFace = (faceId: number) => {
     setSelectedFaces((current) => {
@@ -109,18 +115,56 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
 
     setSplitting(true);
     try {
-      await splitCluster(person.id, Array.from(selectedFaces));
+      await splitCluster(person.id, Array.from(selectedFaces), libHash);
       setSplitOpen(false);
       setSelectedFaces(new Set());
       onUpdate();
     } finally {
       setSplitting(false);
     }
-  }, [onUpdate, person.id, selectedFaces]);
+  }, [onUpdate, person.id, selectedFaces, libHash]);
+
+  const handleDelete = useCallback(async () => {
+    if (!window.confirm(`Dissolve "${person.name || "this cluster"}"? Photos will remain, but the identity link will be removed.`)) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await deletePerson(person.id, libHash);
+      onUpdate();
+    } catch {
+       setIsDeleting(false);
+    }
+  }, [onUpdate, person.id, person.name, libHash]);
 
   return (
-    <article className="panel" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      <div className="person-card__header" style={{ display: "flex", gap: "20px", alignItems: "flex-start" }}>
+    <article className="panel" style={{ display: "flex", flexDirection: "column", gap: "20px", position: "relative", border: selected ? "2px solid var(--electric-purple)" : undefined }}>
+      {selectable && (
+        <button
+          type="button"
+          onClick={onSelect}
+          style={{
+            position: "absolute",
+            top: "10px",
+            right: "10px",
+            width: "24px",
+            height: "24px",
+            borderRadius: "4px",
+            border: "2px solid var(--obsidian)",
+            background: selected ? "var(--electric-purple)" : "#fff",
+            cursor: "pointer",
+            zIndex: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {selected && <span style={{ color: "#fff", fontFamily: "var(--font-pixel)", fontSize: "12px" }}>✓</span>}
+        </button>
+      )}
+
+      <div className="person-card__header" style={{ display: "flex", gap: "20px", alignItems: "flex-start", opacity: selectable && !selected ? 0.7 : 1 }}>
         <Link href={`/people/${person.id}`} className="person-card__portrait" style={{ width: "100px", height: "100px", flexShrink: 0, border: "var(--border-thick)", borderRadius: "12px", overflow: "hidden" }}>
           {person.cover_face_url ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -169,14 +213,25 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
                 <Link href={`/people/${person.id}`} style={{ fontFamily: "var(--font-pixel)", fontSize: "1.4rem", textTransform: "uppercase", color: "var(--obsidian)", textDecoration: "none" }}>
                   {person.name || "UNNAMED_NODE"}
                 </Link>
-                <button
-                  type="button"
-                  className="button button--secondary"
-                  style={{ padding: "4px 8px", minHeight: "auto", fontSize: "0.7rem", borderRadius: "6px" }}
-                  onClick={() => setEditing(true)}
-                >
-                  RENAME
-                </button>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    style={{ padding: "4px 8px", minHeight: "auto", fontSize: "0.7rem", borderRadius: "6px" }}
+                    onClick={() => setEditing(true)}
+                  >
+                    RENAME
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    style={{ padding: "4px 8px", minHeight: "auto", fontSize: "0.7rem", borderRadius: "6px", background: "#fee2e2", color: "#991b1b" }}
+                    disabled={isDeleting}
+                    onClick={() => void handleDelete()}
+                  >
+                    {isDeleting ? "..." : "DISSOLVE"}
+                  </button>
+                </div>
               </div>
               <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", opacity: 0.6, marginTop: "4px" }}>
                 {person.face_count} FRAMES • {formatPurityScore(person.purity_score)}
@@ -202,7 +257,7 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
         </div>
       </div>
 
-      <div className="action-row" style={{ display: "flex", gap: "12px" }}>
+      <div className="action-row" style={{ display: "flex", gap: "12px", marginTop: "12px" }}>
         <Link href={`/people/${person.id}`} className="button button--primary" style={{ flexGrow: 1, borderRadius: "12px" }}>
            OPEN_CLUSTER
         </Link>
@@ -213,6 +268,14 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
           onClick={() => setShowMore((value) => !value)}
         >
           {showMore ? "HIDE_TOOLS" : "REFINE"}
+        </button>
+        <button
+          type="button"
+          className="button button--secondary"
+          style={{ borderRadius: "12px", minWidth: "80px", background: selected ? "var(--electric-purple)" : undefined, color: selected ? "#fff" : undefined }}
+          onClick={onSelect}
+        >
+          {selected ? "SELECTED" : "SELECT"}
         </button>
       </div>
 
@@ -273,7 +336,7 @@ export default function PersonCard({ person, onUpdate }: PersonCardProps) {
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={getFaceUrl(faceId)}
+                      src={getFaceUrl(faceId, libHash)}
                       alt={`Face ${faceId}`}
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                     />

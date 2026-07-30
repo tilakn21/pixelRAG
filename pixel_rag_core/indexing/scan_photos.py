@@ -42,28 +42,30 @@ def scan_and_index_photos(root_dir: str, db_path: str) -> int:
 
     db_path = Path(db_path)
     conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    cur = conn.cursor()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        cur = conn.cursor()
 
-    inserted = 0
+        inserted = 0
 
-    for img_path in iter_image_files(root):
-        abs_path = str(img_path.resolve())
+        for img_path in iter_image_files(root):
+            abs_path = str(img_path.resolve())
 
-        # Use INSERT OR IGNORE to avoid crashing on duplicates
-        cur.execute(
-            """
-            INSERT OR IGNORE INTO photos(path)
-            VALUES (?)
-            """,
-            (abs_path,),
-        )
+            # Use INSERT OR IGNORE to avoid crashing on duplicates
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO photos(path, has_faces)
+                VALUES (?, NULL)
+                """,
+                (abs_path,),
+            )
 
-        # rowcount will be 1 only if a new row was inserted
-        if cur.rowcount == 1:
-            inserted += 1
+            # rowcount will be 1 only if a new row was inserted
+            if cur.rowcount == 1:
+                inserted += 1
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
 
     return inserted

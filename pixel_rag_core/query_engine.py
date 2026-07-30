@@ -10,8 +10,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from google import genai
-from google.genai import types
 from groq import Groq
 
 # Add project root to path so we can resolve pixel_rag_core imports easily
@@ -32,20 +30,16 @@ VALID_SCENE_CATEGORIES = [
 class GraphQueryEngine:
     def __init__(self, db_path: str = str(DB_PATH)):
         self.db_path = Path(db_path)
-        self.model_name = os.getenv("LLM_MODEL", "gemini-2.5-flash")
         self.groq_model = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
         
-        # Initialize Gemini
-        try:
-            self.client = genai.Client()  # Requires GEMINI_API_KEY
-        except Exception as e:
-            self.client = None
-            print(f"[PixelRAG] Warning: Gemini Client failed to initialize ({e}).")
-
-        # Initialize Groq Fallback
+        # Initialize Groq
         try:
             groq_key = os.getenv("GROQ_API_KEY")
-            self.groq_client = Groq(api_key=groq_key) if groq_key else None
+            if groq_key:
+                self.groq_client = Groq(api_key=groq_key)
+            else:
+                self.groq_client = None
+                print("[PixelRAG] Warning: GROQ_API_KEY not found in environment. Natural language parsing will not work.")
         except Exception as e:
             self.groq_client = None
             print(f"[PixelRAG] Warning: Groq Client failed to initialize ({e}).")
@@ -118,6 +112,7 @@ class GraphQueryEngine:
         - date: A string representing a date, year '2023', month '2023-10', or empty string if none. Choose the simplest substring out of YYYY-MM-DD.
         - location: A string representing a city, state, or country. Empty string if none.
         - scene_category: One of the following valid categories ONLY: {categories_str}. Set to null if the user does not mention a photo type. "people" is for photos of people/faces.
+        - semantic_query: A string representing visual elements, objects, clothing, or actions described by the user (e.g., "red color cloth", "sitting on a car", "wearing sunglasses"). Empty string if none. Do NOT include people's names in this string.
         - strict: Boolean. True if the query implies ALL people must be in the photo (e.g., "tilak and alice put together", "photos of tilak and alice"). False if ANY ("tilak or alice"). Default to True for a single person or if ambiguous.
         - exclusive: Boolean. True if the user explicitly mentions "only", "just", "alone", "nobody else", or "by himself/herself". Default to False.
 
@@ -134,49 +129,27 @@ class GraphQueryEngine:
         - scene_category should be null when the user does not mention any content type.
         '''
 
-        if not self.client and not self.groq_client:
-            print("[PixelRAG] No LLM Client found. Cannot parse query.")
-            return {"names": [], "date": "", "location": "", "scene_category": None, "strict": True, "exclusive": False}
+        if not self.groq_client:
+            print("[PixelRAG] No Groq Client found. Cannot parse query.")
+            return {"names": [], "date": "", "location": "", "scene_category": None, "semantic_query": "", "strict": True, "exclusive": False}
 
-        # Try Gemini First
-        if self.client:
-            print(f"[PixelRAG] Querying {self.model_name} (Gemini) to parse intent...")
-            try:
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=f"Extract parameters from this query: {prompt}",
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=0.0,
-                        response_mime_type="application/json",
-                    ),
-                )
-                data = json.loads(response.text.strip())
-                return self._finalize_params(data)
-            except Exception as e:
-                print(f"[PixelRAG] Gemini parse failed: {e}")
-                if not self.groq_client:
-                    return {"names": [], "date": "", "location": "", "scene_category": None, "strict": True, "exclusive": False}
+        print(f"[PixelRAG] Querying Groq ({self.groq_model}) to parse intent...")
+        try:
+            completion = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": f"Extract parameters from this query: {prompt}"}
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"}
+            )
+            data = json.loads(completion.choices[0].message.content)
+            return self._finalize_params(data)
+        except Exception as e:
+            print(f"[PixelRAG] Groq parse failed: {e}")
 
-        # Fallback to Groq
-        if self.groq_client:
-            print(f"[PixelRAG] Falling back to Groq ({self.groq_model}) for intent parsing...")
-            try:
-                completion = self.groq_client.chat.completions.create(
-                    model=self.groq_model,
-                    messages=[
-                        {"role": "system", "content": system_instruction},
-                        {"role": "user", "content": f"Extract parameters from this query: {prompt}"}
-                    ],
-                    temperature=0.0,
-                    response_format={"type": "json_object"}
-                )
-                data = json.loads(completion.choices[0].message.content)
-                return self._finalize_params(data)
-            except Exception as e:
-                print(f"[PixelRAG] Groq fallback also failed: {e}")
-
-        return {"names": [], "date": "", "location": "", "scene_category": None, "strict": True, "exclusive": False}
+        return {"names": [], "date": "", "location": "", "scene_category": None, "semantic_query": "", "strict": True, "exclusive": False}
 
     def _finalize_params(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize parsed JSON into standard search parameters."""
@@ -185,6 +158,7 @@ class GraphQueryEngine:
             "date": data.get("date", ""),
             "location": data.get("location", ""),
             "scene_category": data.get("scene_category"),
+            "semantic_query": data.get("semantic_query", ""),
             "strict": data.get("strict", True),
             "exclusive": data.get("exclusive", False)
         }
@@ -336,9 +310,57 @@ class GraphQueryEngine:
 
         print(f"Generated SQL: {sql}\nParams: {params}\n")
 
-        # 4. Execute
+        # 4. Execute SQL
         photos = self.execute_query(sql, params)
-        print(f"Found {len(photos)} matching photos.")
+        print(f"Found {len(photos)} matching photos via SQL.")
+
+        # 5. Semantic Search (CLIP) if semantic_query exists
+        semantic_query = parsed.get("semantic_query", "").strip()
+        if semantic_query and photos:
+            print(f"Applying semantic search for: '{semantic_query}'")
+            import torch
+            import numpy as np
+            import pixel_rag_core.indexing.scene_classifier as sc
+            
+            try:
+                sc._ensure_model_loaded()
+                with torch.no_grad():
+                    text_tokens = sc._clip_tokenizer([semantic_query])
+                    text_features = sc._clip_model.encode_text(text_tokens)
+                    text_features /= text_features.norm(dim=-1, keepdim=True)
+                    text_emb = text_features.cpu().numpy().astype(np.float32).flatten()
+
+                # Get embeddings for candidate photos
+                conn = sqlite3.connect(self.db_path)
+                photo_ids = [p["id"] for p in photos]
+                placeholders = ",".join(["?"] * len(photo_ids))
+                emb_rows = conn.execute(
+                    f"SELECT photo_id, embedding FROM photo_embeddings WHERE photo_id IN ({placeholders})", 
+                    photo_ids
+                ).fetchall()
+                conn.close()
+
+                emb_dict = {}
+                for pid, emb_bytes in emb_rows:
+                    emb_dict[pid] = np.frombuffer(emb_bytes, dtype=np.float32)
+
+                # Score photos
+                scored_photos = []
+                for p in photos:
+                    pid = p["id"]
+                    if pid in emb_dict:
+                        sim = float(np.dot(text_emb, emb_dict[pid]))
+                        p["semantic_score"] = sim
+                        scored_photos.append(p)
+                
+                # Sort by similarity
+                scored_photos.sort(key=lambda x: x["semantic_score"], reverse=True)
+                
+                # Filter out low relevance (heuristic threshold, e.g., 0.2)
+                photos = [p for p in scored_photos if p["semantic_score"] > 0.2]
+                print(f"Semantic filtering kept {len(photos)} photos.")
+            except Exception as e:
+                print(f"[PixelRAG] Semantic search failed: {e}")
 
         return {
             "prompt": prompt,
@@ -365,8 +387,8 @@ if __name__ == "__main__":
         print("Please provide a prompt. Example: python query_engine.py \"Show me photos of Shriyash from 2023\"")
         sys.exit(1)
 
-    if not os.getenv("GEMINI_API_KEY"):
-        print("ERROR: GEMINI_API_KEY environment variable is missing. It is required for parsing natural language.")
+    if not os.getenv("GROQ_API_KEY"):
+        print("ERROR: GROQ_API_KEY environment variable is missing. It is required for parsing natural language.")
         sys.exit(1)
 
     engine = GraphQueryEngine()

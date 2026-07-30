@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import PhotoGrid from "@/components/PhotoGrid";
-import { deletePerson, fetchPerson, fetchPhotos } from "@/lib/api";
+import { deletePerson, fetchPerson, fetchPhotos, fetchHealth } from "@/lib/api";
 import { formatPurityScore } from "@/lib/display";
 import type { Person, Photo } from "@/lib/types";
 import { useRouter } from "next/navigation";
@@ -20,7 +20,14 @@ export default function PersonPhotosPage({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [libHash, setLibHash] = useState("");
   const router = useRouter();
+
+  useEffect(() => {
+    fetchHealth()
+      .then((health) => setLibHash(`${health.lib_hash}_${health.sync_version}`))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     async function loadData() {
@@ -29,8 +36,8 @@ export default function PersonPhotosPage({ params }: PageProps) {
 
       try {
         const [personData, photosData] = await Promise.all([
-          fetchPerson(personId),
-          fetchPhotos({ person_id: personId, page_size: 200 }),
+          fetchPerson(personId, libHash),
+          fetchPhotos({ person_id: personId, page_size: 200, libHash }),
         ]);
         setPerson(personData);
         setPhotos(photosData.items);
@@ -42,7 +49,7 @@ export default function PersonPhotosPage({ params }: PageProps) {
     }
 
     void loadData();
-  }, [personId]);
+  }, [personId, libHash]);
 
   const handleDelete = async () => {
     if (!window.confirm(`Dissolve "${person?.name || "this cluster"}"? Photos will remain, but the identity link will be removed.`)) {
@@ -51,7 +58,7 @@ export default function PersonPhotosPage({ params }: PageProps) {
 
     setIsDeleting(true);
     try {
-      await deletePerson(personId);
+      await deletePerson(personId, libHash);
       router.push("/people");
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Failed to dissolve the cluster.");

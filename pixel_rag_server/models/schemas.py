@@ -27,6 +27,10 @@ class PhotoResponse(BaseModel):
     longitude: Optional[float] = None
     description: Optional[str] = None
     scene_tags: List[str] = Field(default_factory=list)
+    matched_face_id: Optional[int] = None
+    thumbnail_url: Optional[str] = None
+    lib_hash: Optional[str] = None
+    semantic_score: Optional[float] = None
 
 
 class PaginatedPhotos(BaseModel):
@@ -67,7 +71,12 @@ class SearchResponse(BaseModel):
 class SyncStatus(BaseModel):
     status: str = "idle"  # "idle", "running", "complete", "error"
     progress: int = 0
-    current_file: Optional[str] = None
+    step_name: Optional[str] = None
+    step_index: int = 0
+    total_steps: int = 0
+    sub_progress: int = 0
+    sub_message: Optional[str] = None
+    current_file: Optional[str] = None  # Deprecated in favor of sub_message, but keeping for compatibility
     photos_processed: int = 0
     photos_total: int = 0
     error_message: Optional[str] = None
@@ -86,3 +95,25 @@ class HealthResponse(BaseModel):
     library_path: str = ""
     known_libraries: List[str] = Field(default_factory=list)
     lib_hash: str = ""
+    sync_version: int = 0
+
+
+class HealthzResponse(BaseModel):
+    """Response model for the /healthz liveness probe."""
+    status: str = "ok"
+    stalled_since: Optional[str] = None
+
+
+class SuggestedMerge(BaseModel):
+    identity_a_id: int
+    identity_b_id: int
+    similarity_score: float
+    sample_face_a: Optional[str] = None
+    sample_face_b: Optional[str] = None
+
+
+class TagByPhotoResponse(BaseModel):
+    person: PersonResponse
+    clusters_absorbed: int
+    total_photos: int
+    message: str

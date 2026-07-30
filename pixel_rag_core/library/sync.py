@@ -82,43 +82,45 @@ def get_sync_diff(
     Returns (new_files, modified_files, deleted_files).
     """
     conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    _ensure_sync_table(conn)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        _ensure_sync_table(conn)
 
-    # Get what's in the DB
-    indexed = {}
-    for row in conn.execute("SELECT path, last_modified, file_hash FROM indexed_files"):
-        indexed[row[0]] = {"mtime": row[1], "hash": row[2]}
+        # Get what's in the DB
+        indexed = {}
+        for row in conn.execute("SELECT path, last_modified, file_hash FROM indexed_files"):
+            indexed[row[0]] = {"mtime": row[1], "hash": row[2]}
 
-    # Get what's on disk
-    on_disk = dict(get_folder_files(folder_path))
+        # Get what's on disk
+        on_disk = dict(get_folder_files(folder_path))
 
-    new_files = []
-    modified_files = []
-    deleted_files = []
+        new_files = []
+        modified_files = []
+        deleted_files = []
 
-    for path, mtime in on_disk.items():
-        if path not in indexed:
-            new_files.append(path)
-        else:
-            record = indexed[path]
-            # First quick check: mtime changed?
-            if abs(mtime - record["mtime"]) > 1.0:
-                # Verify with content hash to avoid false positives
-                if record["hash"]:
-                    current_hash = _compute_file_hash(path)
-                    if current_hash != record["hash"]:
+        for path, mtime in on_disk.items():
+            if path not in indexed:
+                new_files.append(path)
+            else:
+                record = indexed[path]
+                # First quick check: mtime changed?
+                if abs(mtime - record["mtime"]) > 1.0:
+                    # Verify with content hash to avoid false positives
+                    if record["hash"]:
+                        current_hash = _compute_file_hash(path)
+                        if current_hash != record["hash"]:
+                            modified_files.append(path)
+                        # else: mtime changed but content is the same — skip
+                    else:
+                        # No stored hash, fall back to mtime-based detection
                         modified_files.append(path)
-                    # else: mtime changed but content is the same — skip
-                else:
-                    # No stored hash, fall back to mtime-based detection
-                    modified_files.append(path)
 
-    for path in indexed:
-        if path not in on_disk:
-            deleted_files.append(path)
+        for path in indexed:
+            if path not in on_disk:
+                deleted_files.append(path)
+    finally:
+        conn.close()
 
-    conn.close()
     return new_files, modified_files, deleted_files
 
 
@@ -135,16 +137,18 @@ def mark_files_indexed(db_path: str, file_paths: List[str], folder_path: str):
         records.append((path, mtime, now, file_hash))
 
     conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    _ensure_sync_table(conn)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        _ensure_sync_table(conn)
 
-    conn.executemany(
-        "INSERT OR REPLACE INTO indexed_files (path, last_modified, indexed_at, file_hash) VALUES (?, ?, ?, ?)",
-        records
-    )
+        conn.executemany(
+            "INSERT OR REPLACE INTO indexed_files (path, last_modified, indexed_at, file_hash) VALUES (?, ?, ?, ?)",
+            records
+        )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def remove_deleted_files(db_path: str, deleted_paths: List[str]):
@@ -153,46 +157,48 @@ def remove_deleted_files(db_path: str, deleted_paths: List[str]):
     Cascade-deletes face_embeddings and cleans up orphaned people rows.
     """
     conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    _ensure_sync_table(conn)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys = ON")
+        _ensure_sync_table(conn)
 
-    for path in deleted_paths:
-        # Get photo_id before deleting
-        photo_row = conn.execute("SELECT id FROM photos WHERE path = ?", (path,)).fetchone()
+        for path in deleted_paths:
+            # Get photo_id before deleting
+            photo_row = conn.execute("SELECT id FROM photos WHERE path = ?", (path,)).fetchone()
 
-        if photo_row:
-            photo_id = photo_row[0]
+            if photo_row:
+                photo_id = photo_row[0]
 
-            # Get face_ids associated with this photo
-            face_rows = conn.execute("SELECT id FROM faces WHERE photo_id = ?", (photo_id,)).fetchall()
+                # Get face_ids associated with this photo
+                face_rows = conn.execute("SELECT id FROM faces WHERE photo_id = ?", (photo_id,)).fetchall()
 
-            # Delete face_embeddings (cascade via FK or manually)
-            for (face_id,) in face_rows:
-                conn.execute("DELETE FROM face_embeddings WHERE face_id = ?", (face_id,))
+                # Delete face_embeddings (cascade via FK or manually)
+                for (face_id,) in face_rows:
+                    conn.execute("DELETE FROM face_embeddings WHERE face_id = ?", (face_id,))
 
-            # Delete faces
-            conn.execute("DELETE FROM faces WHERE photo_id = ?", (photo_id,))
+                # Delete faces
+                conn.execute("DELETE FROM faces WHERE photo_id = ?", (photo_id,))
 
-            # Delete the photo
-            conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
+                # Delete the photo
+                conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
 
-        conn.execute("DELETE FROM indexed_files WHERE path = ?", (path,))
+            conn.execute("DELETE FROM indexed_files WHERE path = ?", (path,))
 
-    # Clean up orphaned people (placeholder names with no remaining faces)
-    conn.execute("""
-        DELETE FROM people WHERE id IN (
-            SELECT ppl.id FROM people ppl
-            LEFT JOIN faces f ON f.person_id = ppl.id
-            LEFT JOIN clusters c ON c.person_id = ppl.id
-            LEFT JOIN faces f2 ON f2.cluster_id = c.id
-            WHERE f.id IS NULL AND f2.id IS NULL
-              AND ppl.name LIKE 'Cluster_%'
-        )
-    """)
+        # Clean up orphaned people (placeholder names with no remaining faces)
+        conn.execute("""
+            DELETE FROM people WHERE id IN (
+                SELECT ppl.id FROM people ppl
+                LEFT JOIN faces f ON f.person_id = ppl.id
+                LEFT JOIN clusters c ON c.person_id = ppl.id
+                LEFT JOIN faces f2 ON f2.cluster_id = c.id
+                WHERE f.id IS NULL AND f2.id IS NULL
+                  AND ppl.name LIKE 'Cluster_%'
+            )
+        """)
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def needs_full_index(folder_path: str, db_path: str) -> bool:
@@ -200,8 +206,10 @@ def needs_full_index(folder_path: str, db_path: str) -> bool:
     if not Path(db_path).exists():
         return True
     conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    _ensure_sync_table(conn)
-    count = conn.execute("SELECT COUNT(*) FROM indexed_files").fetchone()[0]
-    conn.close()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        _ensure_sync_table(conn)
+        count = conn.execute("SELECT COUNT(*) FROM indexed_files").fetchone()[0]
+    finally:
+        conn.close()
     return count == 0

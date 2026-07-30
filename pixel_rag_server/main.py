@@ -2,6 +2,12 @@
 """FastAPI entry point for PixelRAG backend."""
 
 import os
+
+# ALWAYS set these before importing cv2, numpy, or onnxruntime to prevent thread deadlocks
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 import sqlite3
 import sys
 from contextlib import asynccontextmanager
@@ -32,20 +38,56 @@ else:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize the database and heavy AI models on startup."""
-    from pixel_rag_core.db.init_db import init_db
+    # FIRST: Activate all process-level hardening before anything else
+    from pixel_rag_server.process_guard import init_process_guard
+    init_process_guard()
+
+    from pixel_rag_core.db.init_db import init_db, get_db_connection
+    from pixel_rag_core.db.db_migrations import scrub_cross_library_contamination
+    import shutil
 
     if not SETUP_REQUIRED:
-        # Initialize or upgrade the database schema
+        # 1. Initialize or upgrade the database schema
         init_db(DB_PATH)
-        print(f"[PixelRAG Server] Library: {LIBRARY_PATH}")
-        print(f"[PixelRAG Server] Database: {DB_PATH}")
+        
+        # 2. RUN ONE-TIME SCRUBBING (Fix 5)
+        # Purge any legacy 'ghost' identities from before the folder_root fix.
+        conn = get_db_connection(DB_PATH)
+        try:
+            scrub_cross_library_contamination(conn, LIBRARY_PATH)
+        finally:
+            conn.close()
+
+        # 3. ONE-TIME THUMBNAIL CACHE MIGRATION (Fix 6)
+        # Clear legacy unscoped thumbnails (~/.pixelrag/thumbs/*.webp)
+        # Gated by a sentinel file to prevent re-runs.
+        config_dir = Path.home() / ".pixelrag"
+        sentinel = config_dir / ".cache_migrated"
+        
+        if not sentinel.exists():
+            legacy_thumbs = config_dir / "thumbs"
+            if legacy_thumbs.exists():
+                # We only delete the UNSCOPED files in the top level of thumbs/
+                # Scoped subdirectories (hashed) will be preserved (though they shouldn't exist yet)
+                count = 0
+                for f in legacy_thumbs.glob("*.webp"):
+                    if f.is_file():
+                        f.unlink()
+                        count += 1
+                print(f"[PixelRAG] Startup: Cleared {count} stale unscoped thumbnails from legacy cache.")
+            
+            # Mark as migrated
+            config_dir.mkdir(parents=True, exist_ok=True)
+            sentinel.touch()
 
     # Store shared state
     app.state.library_path = LIBRARY_PATH
     app.state.db_path = DB_PATH
     app.state.setup_required = SETUP_REQUIRED
 
-    yield  # Application runs here
+    print(f"[PixelRAG Server] Startup complete. Ready for requests.")
+
+    yield
 
     print("[PixelRAG Server] Shutting down.")
 
@@ -60,7 +102,7 @@ app = FastAPI(
 # CORS — allow Next.js dev server and local network access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow any origin for local network phone access
+    allow_origin_regex="http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,7 +120,7 @@ app.include_router(config.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["system"])
-async def health_check(request: Request):
+def health_check(request: Request):
     """Return server status, photo count, and person count."""
     from pixel_rag_server.models.schemas import HealthResponse
     from fastapi import Request
@@ -86,28 +128,44 @@ async def health_check(request: Request):
     status = "ok"
     photo_count = 0
     person_count = 0
+    lib_path = ""
     lib_hash = ""
     known_libs = []
+
+    from pixel_rag_server.services.library_manager import (
+        get_known_libraries,
+        get_path_hash,
+    )
+    from pathlib import Path
+    import os
+    known_libs = get_known_libraries()
+
+    sync_version = 0
 
     if getattr(request.app.state, "setup_required", False) or not request.app.state.db_path:
         status = "setup_required"
     else:
-        from pixel_rag_server.services.library_manager import (
-            get_known_libraries,
-            get_path_hash,
-        )
-
         lib_path = request.app.state.library_path
         lib_hash = get_path_hash(lib_path)
-        known_libs = get_known_libraries()
         try:
             conn = sqlite3.connect(request.app.state.db_path, timeout=10)
-            conn.execute("PRAGMA journal_mode=WAL")
-            photo_count = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
-            person_count = conn.execute(
-                "SELECT COUNT(*) FROM people WHERE confirmed = 1"
-            ).fetchone()[0]
-            conn.close()
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                photo_count = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+                person_count = conn.execute(
+                    "SELECT COUNT(*) FROM people WHERE confirmed = 1"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+        except Exception:
+            pass
+            
+        try:
+            import hashlib
+            lib_hash_12 = hashlib.md5(lib_path.encode()).hexdigest()[:12]
+            face_cache_dir = Path.home() / ".pixelrag" / "thumbs" / lib_hash_12 / "faces"
+            if face_cache_dir.exists():
+                sync_version = int(face_cache_dir.stat().st_mtime)
         except Exception:
             pass
 
@@ -118,4 +176,11 @@ async def health_check(request: Request):
         library_path=lib_path,
         known_libraries=known_libs,
         lib_hash=lib_hash,
+        sync_version=sync_version,
     )
+
+
+@app.get("/healthz", tags=["system"])
+async def healthz():
+    """Liveness/readiness probe. Returns 200 OK if the web server is up."""
+    return {"status": "ok"}

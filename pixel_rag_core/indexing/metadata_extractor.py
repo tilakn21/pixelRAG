@@ -171,50 +171,72 @@ def enrich_photos_metadata(db_path: str, limit: Optional[int] = None) -> int:
     """
     db_path = Path(db_path)
     conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    cur = conn.cursor()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        cur = conn.cursor()
 
-    # Select photos where created_at is NULL; you can extend this condition later
-    query = """
-        SELECT id, path
-        FROM photos
-        WHERE created_at IS NULL
-    """
-    if limit is not None:
-        query += " LIMIT ?"
-        cur.execute(query, (limit,))
-    else:
-        cur.execute(query)
+        # Select photos where created_at is NULL; you can extend this condition later
+        query = """
+            SELECT id, path
+            FROM photos
+            WHERE created_at IS NULL
+        """
+        if limit is not None:
+            query += " LIMIT ?"
+            cur.execute(query, (limit,))
+        else:
+            cur.execute(query)
 
-    rows = cur.fetchall()
+        rows = cur.fetchall()
 
-    updated_count = 0
+        updated_count = 0
 
-    for photo_id, path in rows:
-        img_path = Path(path)
-        if not img_path.exists():
-            # Skip missing files
-            continue
+        def _log_exif_failure(conn, path, error):
+            """Log EXIF extraction failure to failed_images table. Never raises."""
+            try:
+                prev = conn.execute(
+                    "SELECT retry_count FROM failed_images WHERE path = ? AND stage = 'EXIF' ORDER BY id DESC LIMIT 1",
+                    (path,)
+                ).fetchone()
+                retry_count = (prev[0] + 1) if prev else 0
+                conn.execute(
+                    "INSERT INTO failed_images (path, stage, error, failed_at, retry_count) VALUES (?, 'EXIF', ?, datetime('now'), ?)",
+                    (path, str(error)[:500], retry_count)
+                )
+            except Exception:
+                pass
 
-        created_at, lat, lon, make, model = extract_metadata_for_photo(img_path)
+        for photo_id, path in rows:
+            try:
+                img_path = Path(path)
+                if not img_path.exists():
+                    # Skip missing files
+                    continue
 
-        cur.execute(
-            """
-            UPDATE photos
-            SET created_at = COALESCE(?, created_at),
-                latitude   = COALESCE(?, latitude),
-                longitude  = COALESCE(?, longitude),
-                camera_make  = COALESCE(?, camera_make),
-                camera_model = COALESCE(?, camera_model)
-            WHERE id = ?
-            """,
-            (created_at, lat, lon, make, model, photo_id),
-        )
+                created_at, lat, lon, make, model = extract_metadata_for_photo(img_path)
 
-        if cur.rowcount == 1:
-            updated_count += 1
+                cur.execute(
+                    """
+                    UPDATE photos
+                    SET created_at = COALESCE(?, created_at),
+                        latitude   = COALESCE(?, latitude),
+                        longitude  = COALESCE(?, longitude),
+                        camera_make  = COALESCE(?, camera_make),
+                        camera_model = COALESCE(?, camera_model)
+                    WHERE id = ?
+                    """,
+                    (created_at, lat, lon, make, model, photo_id),
+                )
 
-    conn.commit()
-    conn.close()
+                if cur.rowcount == 1:
+                    updated_count += 1
+            except Exception as e:
+                print(f"[PixelRAG] ⚠️ EXIF extraction failed for {path}: {e}")
+                _log_exif_failure(conn, path, e)
+                continue
+
+        conn.commit()
+    finally:
+        conn.close()
 
     return updated_count

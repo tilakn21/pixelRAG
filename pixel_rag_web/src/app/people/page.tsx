@@ -1,24 +1,42 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AsciiField from "@/components/AsciiField";
 import PersonCard from "@/components/PersonCard";
-import { fetchIdentities } from "@/lib/api";
-import type { Person } from "@/lib/types";
+import { fetchIdentities, batchDissolve, batchMergePersons, tagByPhoto, fetchHealth } from "@/lib/api";
+import type { Person, TagByPhotoResponse } from "@/lib/types";
 
 export default function PeoplePage() {
   const [persons, setPersons] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
   const [showUnnamedOnly, setShowUnnamedOnly] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchActionRunning, setBatchActionRunning] = useState(false);
+  const [libHash, setLibHash] = useState("");
+  
+  // Tag by Photo modal state
+  const [showTagModal, setShowTagModal] = useState(false);
+  const [tagFile, setTagFile] = useState<File | null>(null);
+  const [tagName, setTagName] = useState("");
+  const [tagLoading, setTagLoading] = useState(false);
+  const [tagResult, setTagResult] = useState<TagByPhotoResponse | null>(null);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadPersons = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchIdentities();
+      const data = await fetchIdentities(undefined, libHash);
       setPersons(data);
     } finally {
       setLoading(false);
     }
+  }, [libHash]);
+
+  useEffect(() => {
+    fetchHealth()
+      .then((health) => setLibHash(`${health.lib_hash}_${health.sync_version}`))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -31,6 +49,72 @@ export default function PeoplePage() {
     (a, b) => (a.purity_score ?? 0) - (b.purity_score ?? 0)
   );
   const displayed = showUnnamedOnly ? sortedUnnamed : [...named, ...sortedUnnamed];
+
+  const toggleSelection = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBatchDissolve = async () => {
+    if (!window.confirm(`Dissolve ${selectedIds.size} clusters?`)) return;
+    setBatchActionRunning(true);
+    try {
+      await batchDissolve(Array.from(selectedIds), libHash);
+      setSelectedIds(new Set());
+      await loadPersons();
+    } finally {
+      setBatchActionRunning(false);
+    }
+  };
+
+  const handleBatchMerge = async () => {
+    if (!window.confirm(`Merge ${selectedIds.size} clusters into one? The cluster with the most faces will absorb the rest.`)) return;
+    setBatchActionRunning(true);
+    try {
+      const selectedPersons = persons.filter((p) => selectedIds.has(p.id));
+      // Target is the one with the most faces
+      const target = selectedPersons.reduce((prev, current) => 
+        (current.face_count > prev.face_count) ? current : prev
+      );
+      const sourceIds = Array.from(selectedIds).filter((id) => id !== target.id);
+      
+      if (sourceIds.length > 0) {
+        await batchMergePersons(target.id, sourceIds, libHash);
+      }
+      setSelectedIds(new Set());
+      await loadPersons();
+    } finally {
+      setBatchActionRunning(false);
+    }
+  };
+
+  const handleTagByPhoto = async () => {
+    if (!tagFile || !tagName.trim()) return;
+    setTagLoading(true);
+    setTagError(null);
+    setTagResult(null);
+    try {
+      const result = await tagByPhoto(tagFile, tagName.trim(), libHash);
+      setTagResult(result);
+      await loadPersons();
+    } catch (e: unknown) {
+      setTagError(e instanceof Error ? e.message : "Tag by photo failed");
+    } finally {
+      setTagLoading(false);
+    }
+  };
+
+  const closeTagModal = () => {
+    setShowTagModal(false);
+    setTagFile(null);
+    setTagName("");
+    setTagResult(null);
+    setTagError(null);
+  };
 
   return (
     <div className="bento-container" style={{ display: "grid", gap: "20px", gridTemplateColumns: "repeat(12, 1fr)", padding: "20px 0" }}>
@@ -59,6 +143,19 @@ export default function PeoplePage() {
             onClick={() => setShowUnnamedOnly((value) => !value)}
           >
             <span style={{ fontFamily: "var(--font-pixel)" }}>{showUnnamedOnly ? "[ SHOWING_UNNAMED_ONLY ]" : "[ FILTER_UNNAMED ]"}</span>
+          </button>
+          <button
+            type="button"
+            className="button button--secondary"
+            style={{ 
+              borderRadius: "12px", 
+              border: "var(--border-thick)",
+              background: "#fff",
+              color: "#000"
+            }}
+            onClick={() => setShowTagModal(true)}
+          >
+            <span style={{ fontFamily: "var(--font-pixel)" }}>[ TAG_BY_PHOTO ]</span>
           </button>
         </div>
       </article>
@@ -104,11 +201,211 @@ export default function PeoplePage() {
         <div style={{ gridColumn: "span 12", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "24px" }}>
           {displayed.map((person, index) => (
             <div key={person.id} className={`animate-reveal stagger-${(index % 4) + 1}`}>
-              <PersonCard person={person} onUpdate={loadPersons} />
+              <PersonCard 
+                person={person} 
+                onUpdate={loadPersons} 
+                selectable={selectedIds.size > 0}
+                selected={selectedIds.has(person.id)}
+                onSelect={() => toggleSelection(person.id)}
+                libHash={libHash}
+              />
             </div>
           ))}
         </div>
       ) : null}
+
+      {/* Action Bar for Batch Selection */}
+      {selectedIds.size > 0 && (
+        <div style={{
+          position: "fixed",
+          bottom: "24px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: "var(--obsidian)",
+          color: "#fff",
+          padding: "16px 24px",
+          borderRadius: "16px",
+          display: "flex",
+          alignItems: "center",
+          gap: "24px",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+          zIndex: 100,
+          fontFamily: "var(--font-pixel)",
+          border: "var(--border-thick)"
+        }}>
+          <span style={{ fontSize: "1.2rem", color: "var(--sun-yellow)" }}>
+            [{selectedIds.size} SELECTED]
+          </span>
+          <div style={{ display: "flex", gap: "12px" }}>
+            <button
+              className="button button--secondary"
+              onClick={handleBatchMerge}
+              disabled={batchActionRunning || selectedIds.size < 2}
+              style={{ background: "#fff", color: "#000" }}
+            >
+              MERGE_ALL
+            </button>
+            <button
+              className="button button--secondary"
+              onClick={handleBatchDissolve}
+              disabled={batchActionRunning}
+              style={{ background: "#fee2e2", color: "#991b1b" }}
+            >
+              DISSOLVE_ALL
+            </button>
+            <button
+              className="button button--primary"
+              onClick={() => setSelectedIds(new Set())}
+              disabled={batchActionRunning}
+              style={{ background: "transparent", color: "#fff", textDecoration: "underline" }}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Tag by Photo Modal */}
+      {showTagModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 200,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeTagModal(); }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: "20px",
+              padding: "32px",
+              maxWidth: "480px",
+              width: "90%",
+              border: "var(--border-thick)",
+              boxShadow: "8px 8px 0 var(--obsidian)",
+            }}
+          >
+            <h2 style={{ fontFamily: "var(--font-pixel)", fontSize: "1.3rem", marginBottom: "8px" }}>TAG_BY_PHOTO</h2>
+            <p style={{ fontSize: "0.9rem", color: "#666", marginBottom: "20px" }}>
+              Upload a photo of someone and type their name. All matching clusters will be merged and named automatically.
+            </p>
+
+            {/* Drop Zone */}
+            <div
+              style={{
+                border: "3px dashed #ccc",
+                borderRadius: "12px",
+                padding: "24px",
+                textAlign: "center",
+                cursor: "pointer",
+                background: tagFile ? "#f0fdf4" : "#fafafa",
+                marginBottom: "16px",
+                transition: "background 0.2s",
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const file = e.dataTransfer.files[0];
+                if (file && file.type.startsWith("image/")) setTagFile(file);
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setTagFile(file);
+                }}
+              />
+              {tagFile ? (
+                <div>
+                  <span style={{ fontFamily: "var(--font-pixel)", color: "#16a34a" }}>✓ {tagFile.name}</span>
+                </div>
+              ) : (
+                <span style={{ fontFamily: "var(--font-pixel)", color: "#999" }}>DROP_IMAGE_HERE or CLICK_TO_BROWSE</span>
+              )}
+            </div>
+
+            {/* Name Input */}
+            <input
+              type="text"
+              placeholder="Person's name (e.g. Tilak)"
+              value={tagName}
+              onChange={(e) => setTagName(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "12px 16px",
+                borderRadius: "10px",
+                border: "var(--border-thick)",
+                fontFamily: "var(--font-pixel)",
+                fontSize: "1rem",
+                marginBottom: "16px",
+                boxSizing: "border-box",
+              }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleTagByPhoto(); }}
+            />
+
+            {/* Error */}
+            {tagError && (
+              <div style={{ color: "#dc2626", fontFamily: "var(--font-pixel)", fontSize: "0.85rem", marginBottom: "12px" }}>
+                ⚠ {tagError}
+              </div>
+            )}
+
+            {/* Result */}
+            {tagResult && (
+              <div style={{
+                background: "#f0fdf4",
+                border: "2px solid #16a34a",
+                borderRadius: "10px",
+                padding: "12px 16px",
+                marginBottom: "16px",
+                fontFamily: "var(--font-pixel)",
+                fontSize: "0.85rem",
+                color: "#15803d",
+              }}>
+                ✓ {tagResult.message}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                className="button button--secondary"
+                onClick={closeTagModal}
+                style={{ background: "transparent", border: "var(--border-thick)", borderRadius: "10px" }}
+              >
+                <span style={{ fontFamily: "var(--font-pixel)" }}>CANCEL</span>
+              </button>
+              <button
+                className="button button--primary"
+                onClick={handleTagByPhoto}
+                disabled={!tagFile || !tagName.trim() || tagLoading}
+                style={{
+                  background: "var(--electric-purple)",
+                  color: "#fff",
+                  border: "var(--border-thick)",
+                  borderRadius: "10px",
+                  opacity: (!tagFile || !tagName.trim() || tagLoading) ? 0.5 : 1,
+                }}
+              >
+                <span style={{ fontFamily: "var(--font-pixel)" }}>
+                  {tagLoading ? "TAGGING..." : "TAG_PERSON"}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

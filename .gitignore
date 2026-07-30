@@ -55,3 +55,8 @@ pnpm-debug.log*
 *.sqlite3
 
 /testphoto/
+DCIM Camera/
+Photos/
+scratch/
+.pixelrag_config.json
+*.webp

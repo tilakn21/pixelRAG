@@ -88,86 +88,91 @@ def enrich_photos_with_location(db_path: str, limit: Optional[int] = None) -> in
     """
     db_path = Path(db_path)
     conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    cur = conn.cursor()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        cur = conn.cursor()
 
-    # Ensure geocache table exists
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS geocache (
-            lat_rounded  REAL NOT NULL,
-            lon_rounded  REAL NOT NULL,
-            city         TEXT,
-            state        TEXT,
-            country      TEXT,
-            resolved_at  INTEGER,
-            PRIMARY KEY (lat_rounded, lon_rounded)
-        )
-    """)
+        # Ensure geocache table exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS geocache (
+                lat_rounded  REAL NOT NULL,
+                lon_rounded  REAL NOT NULL,
+                city         TEXT,
+                state        TEXT,
+                country      TEXT,
+                resolved_at  INTEGER,
+                PRIMARY KEY (lat_rounded, lon_rounded)
+            )
+        """)
 
-    # Find photos that have a location but haven't been reverse-geocoded yet
-    query = """
-        SELECT id, latitude, longitude
-        FROM photos
-        WHERE latitude IS NOT NULL 
-          AND longitude IS NOT NULL
-          AND city IS NULL
-    """
-    
-    if limit is not None:
-        query += f" LIMIT {limit}"
+        # Find photos that have a location but haven't been reverse-geocoded yet
+        query = """
+            SELECT id, latitude, longitude
+            FROM photos
+            WHERE latitude IS NOT NULL 
+              AND longitude IS NOT NULL
+              AND city IS NULL
+        """
         
-    cur.execute(query)
-    rows = cur.fetchall()
+        if limit is not None:
+            query += f" LIMIT {limit}"
+            
+        cur.execute(query)
+        rows = cur.fetchall()
 
-    if not rows:
-        print("[PixelRAG] No photos need reverse geocoding.")
+        if not rows:
+            print("[PixelRAG] No photos need reverse geocoding.")
+            return 0
+
+        print(f"[PixelRAG] Reverse geocoding {len(rows)} photos...")
+        updated_count = 0
+
+        for photo_id, lat, lon in rows:
+            try:
+                city = state = country = None
+
+                # Check geocache first
+                cached = _check_geocache(conn, lat, lon)
+                if cached is not None:
+                    city, state, country = cached
+                else:
+                    # Live API call
+                    city, state, country = get_location_details(lat, lon)
+
+                    # Store in geocache regardless of result
+                    _store_geocache(conn, lat, lon, city, state, country)
+                    conn.commit()
+
+                    # Rate limiting: 1.1 seconds between live API calls
+                    time.sleep(1.1)
+
+                if city or state or country:
+                    cur.execute(
+                        """
+                        UPDATE photos 
+                        SET city = ?, state = ?, country = ?
+                        WHERE id = ?
+                        """,
+                        (city, state, country, photo_id)
+                    )
+                    updated_count += 1
+                else:
+                    # Mark as attempted by setting empty strings so we don't infinitely retry
+                    cur.execute(
+                        """
+                        UPDATE photos 
+                        SET city = '', state = '', country = ''
+                        WHERE id = ?
+                        """,
+                        (photo_id,)
+                    )
+            except Exception as e:
+                print(f"[PixelRAG] ⚠️ GEO stage failed for photo_id={photo_id}: {e}")
+                continue
+
+        conn.commit()
+    finally:
         conn.close()
-        return 0
-
-    print(f"[PixelRAG] Reverse geocoding {len(rows)} photos...")
-    updated_count = 0
-
-    for photo_id, lat, lon in rows:
-        city = state = country = None
-
-        # Check geocache first
-        cached = _check_geocache(conn, lat, lon)
-        if cached is not None:
-            city, state, country = cached
-        else:
-            # Live API call
-            city, state, country = get_location_details(lat, lon)
-
-            # Store in geocache regardless of result
-            _store_geocache(conn, lat, lon, city, state, country)
-            conn.commit()
-
-            # Rate limiting: 1.1 seconds between live API calls
-            time.sleep(1.1)
-
-        if city or state or country:
-            cur.execute(
-                """
-                UPDATE photos 
-                SET city = ?, state = ?, country = ?
-                WHERE id = ?
-                """,
-                (city, state, country, photo_id)
-            )
-            updated_count += 1
-        else:
-            # Mark as attempted by setting empty strings so we don't infinitely retry
-            cur.execute(
-                """
-                UPDATE photos 
-                SET city = '', state = '', country = ''
-                WHERE id = ?
-                """,
-                (photo_id,)
-            )
-
-    conn.commit()
-    conn.close()
     
     print(f"[PixelRAG] Successfully geocoded {updated_count} photos.")
     return updated_count

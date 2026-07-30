@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import SearchBar from "@/components/SearchBar";
-import { fetchHealth, setLibraryPath } from "@/lib/api";
+import { fetchHealth, setLibraryPath, deleteLibrary, browseLibrary } from "@/lib/api";
 import { formatCompactNumber } from "@/lib/display";
 import type { HealthResponse } from "@/lib/types";
 
@@ -14,6 +14,8 @@ export default function HomePage() {
   const [isSwitched, setIsSwitched] = useState(false);
   const [libraryInput, setLibraryInput] = useState("");
   const [setupSaving, setSetupSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isBrowsing, setIsBrowsing] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -32,9 +34,48 @@ export default function HomePage() {
       });
   }, []);
 
+  const handleLibraryAction = async (action: 'dismount' | 'wipe') => {
+    if (!health?.library_path) return;
+    
+    const confirmMsg = action === 'wipe' 
+      ? `PERMANENTLY DELETE all AI metadata for this folder?\n\nThis will wipe your face clusters and tags for good.`
+      : `Dismount this library from PixelRAG?\n\n(No files will be deleted)`;
+
+    if (!confirm(confirmMsg)) return;
+
+    setIsDeleting(true);
+    try {
+      await deleteLibrary(health.library_path, action === 'wipe');
+      window.location.reload();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleBrowse = async () => {
+    setIsBrowsing(true);
+    try {
+      const result = await browseLibrary();
+      if (result.path) {
+        setLibraryInput(result.path);
+      }
+    } catch (err: any) {
+      setError("Failed to open system dialog: " + err.message);
+    } finally {
+      setIsBrowsing(false);
+    }
+  };
+
   const handleSetup = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!libraryInput.trim()) return;
+    
+    // If input is empty, trigger browse instead of failing
+    if (!libraryInput.trim()) {
+      handleBrowse();
+      return;
+    }
 
     setSetupSaving(true);
     setError(null);
@@ -112,26 +153,94 @@ export default function HomePage() {
       <article className="panel animate-reveal stagger-3" style={{ gridColumn: "span 6", background: "var(--obsidian)", color: "#fff", display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <span style={{ fontFamily: "var(--font-pixel)", fontSize: "0.7rem", color: "rgba(255,255,255,0.4)" }}>[ LIBRARY_STATUS ]</span>
-          {isSwitched && <span style={{ background: "var(--neon-green)", color: "#000", padding: "4px 8px", fontSize: "0.75rem", fontWeight: 700, borderRadius: "4px", fontFamily: "var(--font-pixel)" }}>UPDATED</span>}
+          <div style={{ display: "flex", gap: "8px" }}>
+            {isSwitched && <span style={{ background: "var(--neon-green)", color: "#000", padding: "4px 8px", fontSize: "0.75rem", fontWeight: 700, borderRadius: "4px", fontFamily: "var(--font-pixel)" }}>UPDATED</span>}
+            {health?.library_path && (
+              <button 
+                onClick={() => handleLibraryAction('dismount')}
+                disabled={isDeleting}
+                style={{ 
+                  background: "var(--blood-red)", 
+                  color: "#fff", 
+                  border: "none", 
+                  borderRadius: "4px", 
+                  padding: "4px 10px", 
+                  fontSize: "0.65rem", 
+                  fontFamily: "var(--font-pixel)",
+                  cursor: "pointer"
+                }}
+              >
+                DISMOUNT
+              </button>
+            )}
+             {health?.library_path && (
+              <button 
+                onClick={() => handleLibraryAction('wipe')}
+                disabled={isDeleting}
+                style={{ 
+                  background: "transparent", 
+                  color: "var(--blood-red)", 
+                  border: "1px solid var(--blood-red)", 
+                  borderRadius: "4px", 
+                  padding: "4px 10px", 
+                  fontSize: "0.65rem", 
+                  fontFamily: "var(--font-pixel)",
+                  cursor: "pointer"
+                }}
+              >
+                WIPE_AI
+              </button>
+            )}
+          </div>
         </div>
         <div style={{ marginTop: "16px" }}>
-          <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.85rem", color: "var(--sun-yellow)", wordBreak: "break-all" }}>{health?.library_path ?? "AWAITING_CONNECTION_SEQUENCE..."}</p>
+          <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.85rem", color: "var(--sun-yellow)", wordBreak: "break-all" }}>{health?.library_path || "AWAITING_CONNECTION_SEQUENCE..."}</p>
           <form style={{ display: "flex", gap: "10px", marginTop: "20px" }} onSubmit={handleSetup}>
-            <input
-              className="input--mono"
-              style={{ flexGrow: 1, border: "2px solid #fff", borderRadius: "12px", padding: "0 16px", background: "rgba(255,255,255,0.1)", color: "#fff" }}
-              value={libraryInput}
-              onChange={(event) => setLibraryInput(event.target.value)}
-              placeholder="/Volumes/Archive/Photos"
-              disabled={setupSaving}
-            />
+            <div style={{ position: "relative", flexGrow: 1, display: "flex" }}>
+              <input
+                className="input--mono"
+                style={{ flexGrow: 1, border: "2px solid #fff", borderRadius: "12px", padding: "0 44px 0 16px", background: "rgba(255,255,255,0.1)", color: "#fff", height: "48px" }}
+                value={libraryInput}
+                onChange={(event) => setLibraryInput(event.target.value)}
+                placeholder="/Volumes/Archive/Photos"
+                disabled={setupSaving || isBrowsing}
+              />
+              <button
+                type="button"
+                onClick={handleBrowse}
+                disabled={setupSaving || isBrowsing}
+                title="Browse System Folders"
+                style={{
+                  position: "absolute",
+                  right: "8px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  color: "#fff",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "8px",
+                  opacity: 0.7,
+                  transition: "opacity 0.2s"
+                }}
+                onMouseOver={(e) => (e.currentTarget.style.opacity = "1")}
+                onMouseOut={(e) => (e.currentTarget.style.opacity = "0.7")}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                </svg>
+              </button>
+            </div>
             <button
               type="submit"
               className="button button--secondary"
-              style={{ borderRadius: "12px", border: "2px solid #fff", minWidth: "80px" }}
-              disabled={setupSaving || !libraryInput.trim()}
+              style={{ borderRadius: "12px", border: "2px solid #fff", minWidth: "100px", height: "48px" }}
+              disabled={setupSaving || isBrowsing}
             >
-              {setupSaving ? "..." : "MOUNT"}
+              {setupSaving || isBrowsing ? "..." : libraryInput.trim() ? "MOUNT" : "BROWSE"}
             </button>
           </form>
         </div>

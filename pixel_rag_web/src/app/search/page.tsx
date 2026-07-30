@@ -7,7 +7,7 @@ import CategoryPills from "@/components/CategoryPills";
 import PhotoGrid from "@/components/PhotoGrid";
 import SearchBar from "@/components/SearchBar";
 import FullscreenLoader from "@/components/FullscreenLoader";
-import { searchByFace, searchPhotos } from "@/lib/api";
+import { searchByFace, searchPhotos, fetchHealth } from "@/lib/api";
 import { formatSceneCategory } from "@/lib/display";
 import type { SearchResponse } from "@/lib/types";
 
@@ -25,13 +25,20 @@ function SearchContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [phaseIndex, setPhaseIndex] = useState(0);
+  const [libHash, setLibHash] = useState("");
+
+  useEffect(() => {
+    fetchHealth()
+      .then((health) => setLibHash(`${health.lib_hash}_${health.sync_version}`))
+      .catch(() => {});
+  }, []);
 
   const handleSearch = useCallback(async (query: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      const data = await searchPhotos(query);
+      const data = await searchPhotos(query, libHash);
       startTransition(() => {
         setResult(data);
       });
@@ -41,14 +48,14 @@ function SearchContent() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [libHash]);
 
   const handleImageSearch = useCallback(async (file: File) => {
     setLoading(true);
     setError(null);
 
     try {
-      const data = await searchByFace(file);
+      const data = await searchByFace(file, libHash);
       startTransition(() => {
         setResult(data);
       });
@@ -58,7 +65,7 @@ function SearchContent() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [libHash]);
 
   useEffect(() => {
     if (!queryFromUrl) return;

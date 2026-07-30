@@ -5,7 +5,7 @@ import sqlite3
 import time
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Depends
 from pydantic import BaseModel
 
 from pixel_rag_server.models.schemas import (
@@ -14,10 +14,11 @@ from pixel_rag_server.models.schemas import (
     SearchResponse,
     SearchSuggestions,
 )
+from pixel_rag_server.dependencies import get_db_path, LibraryContext
 
 router = APIRouter(tags=["search"])
 
-def _map_photos(db_path: str, photos: list) -> list[PhotoResponse]:
+def _map_photos(db_path: str, photos: list, lib_hash: str) -> list[PhotoResponse]:
     """Helper to convert list of raw photo dicts into PhotoResponse objects."""
     photo_responses = []
     if not photos:
@@ -62,6 +63,9 @@ def _map_photos(db_path: str, photos: list) -> list[PhotoResponse]:
                 longitude=photo.get("longitude"),
                 description=photo.get("description"),
                 scene_tags=[t.strip() for t in photo.get("scene_tags", "").split(",")] if photo.get("scene_tags") else [],
+                thumbnail_url=f"/api/media/thumb/{photo_id}?size=400&h={lib_hash}",
+                lib_hash=lib_hash,
+                semantic_score=photo.get("semantic_score")
             )
         )
     conn.close()
@@ -73,9 +77,9 @@ class SearchQuery(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_photos(request: Request, body: SearchQuery):
+def search_photos(request: Request, body: SearchQuery, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Parse a natural-language query with Gemini and return matching photos."""
-    db_path = request.app.state.db_path
+    db_path = lib_ctx.db_path
     start = time.time()
 
     try:
@@ -99,7 +103,7 @@ async def search_photos(request: Request, body: SearchQuery):
     # Build response using helper
     photo_responses = []
     if results and "photos" in results:
-        photo_responses = _map_photos(db_path, results["photos"])
+        photo_responses = _map_photos(db_path, results["photos"], lib_ctx.lib_hash)
 
     # Extract the intent from core results
     intent_data = results.get("intent", {}) if results else {}
@@ -122,20 +126,20 @@ async def search_photos(request: Request, body: SearchQuery):
 
 
 @router.post("/search/face", response_model=SearchResponse)
-async def search_by_face(request: Request, file: UploadFile = File(...)):
+def search_by_face(request: Request, file: UploadFile = File(...), lib_ctx: LibraryContext = Depends(get_db_path)):
     """Search for all photos containing the face in the uploaded image."""
-    db_path = request.app.state.db_path
+    db_path = lib_ctx.db_path
     start = time.time()
     
     try:
-        content = await file.read()
+        content = file.file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": f"Failed to read image: {e}"})
 
     from pixel_rag_core.faces.face_search import find_person_by_image
     
     # 1. Identity match via Gallery
-    match_result = find_person_by_image(db_path, content)
+    match_result = find_person_by_image(db_path, lib_ctx.library_path, content)
     if "error" in match_result:
         # Using 400 (Bad Request) instead of 404 to avoid confusion with 'path not found'
         raise HTTPException(
@@ -154,7 +158,7 @@ async def search_by_face(request: Request, file: UploadFile = File(...)):
     photos = engine.execute_query(sql_data["sql"], sql_data["params"])
     
     # 3. Build response
-    photo_responses = _map_photos(db_path, photos)
+    photo_responses = _map_photos(db_path, photos, lib_ctx.lib_hash)
     
     elapsed_ms = int((time.time() - start) * 1000)
     intent = SearchIntent(names=[person_name])
@@ -169,10 +173,9 @@ async def search_by_face(request: Request, file: UploadFile = File(...)):
 
 
 @router.get("/search/suggestions", response_model=SearchSuggestions)
-async def get_search_suggestions(request: Request):
+def get_search_suggestions(request: Request, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Return person names and cities for autocomplete."""
-    db_path = request.app.state.db_path
-
+    db_path = lib_ctx.db_path
     conn = sqlite3.connect(db_path, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
 

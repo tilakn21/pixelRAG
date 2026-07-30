@@ -29,6 +29,10 @@ export interface Photo {
   longitude: number | null;
   description: string | null;
   scene_tags: string[];
+  matched_face_id?: number | null;
+  thumbnail_url?: string | null;
+  lib_hash?: string | null;
+  semantic_score?: number | null;
 }
 
 export interface PaginatedPhotos {
@@ -69,6 +73,11 @@ export interface SearchResponse {
 export interface SyncStatus {
   status: "idle" | "running" | "complete" | "error";
   progress: number;
+  step_name: string | null;
+  step_index: number;
+  total_steps: number;
+  sub_progress: number;
+  sub_message: string | null;
   current_file: string | null;
   photos_processed: number;
   photos_total: number;
@@ -88,4 +97,12 @@ export interface HealthResponse {
   library_path: string;
   known_libraries: string[];
   lib_hash: string;
+  sync_version: number;
+}
+
+export interface TagByPhotoResponse {
+  person: Person;
+  clusters_absorbed: number;
+  total_photos: number;
+  message: string;
 }

@@ -1,6 +1,7 @@
 import json
 import os
 import hashlib
+import shutil
 from pathlib import Path
 
 # Config in the project root
@@ -29,6 +30,29 @@ def add_known_library(path: str):
         return libraries
     except Exception:
         return []
+
+def remove_known_library(path: str, wipe_data: bool = False):
+    """Removes a library from the tracker and optionally wipes its metadata folder."""
+    try:
+        path = str(Path(path).resolve())
+        libraries = get_known_libraries()
+        if path in libraries:
+            libraries.remove(path)
+            with open(CONFIG_PATH, "w") as f:
+                json.dump({"libraries": libraries}, f, indent=4)
+        
+        # ALWAYS execute wipe_data if requested, even if path wasn't in libraries.
+        # This handles the case where the user deleted it from the UI (which removed it from json)
+        # but the wipe failed or was skipped previously.
+        if wipe_data:
+            pixelrag_dir = Path(path) / ".pixelrag"
+            if pixelrag_dir.exists():
+                shutil.rmtree(pixelrag_dir)
+                
+        return libraries
+    except Exception as e:
+        print(f"[PixelRAG] Error removing library / wiping data: {e}")
+        return get_known_libraries()
 
 def get_path_hash(path: str) -> str:
     """Returns a short stable hash of the library path for cache busting."""

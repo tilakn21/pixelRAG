@@ -2,13 +2,15 @@
 """Media router — serves photos, thumbnails, and face crops with caching."""
 
 import sqlite3
+import hashlib
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from fastapi.responses import Response
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
+from pixel_rag_server.dependencies import get_db_path, LibraryContext
 
 register_heif_opener()
 
@@ -39,17 +41,24 @@ def _open_and_orient(path: str) -> Image.Image:
     return img
 
 
-def _ensure_thumb_dir(db_path: str, subdir: str) -> Path:
-    """Ensure the thumbnail cache directory exists."""
-    thumb_dir = Path(db_path).parent / "thumbs" / subdir
+def _ensure_thumb_dir(lib_ctx: LibraryContext, subdir: str) -> Path:
+    """
+    Ensure the thumbnail cache directory exists in a library-scoped subdirectory.
+    Path: ~/.pixelrag/thumbs/<lib_hash>/<subdir>/
+    """
+    # Global config dir: ~/.pixelrag/
+    base_cache = Path.home() / ".pixelrag" / "thumbs"
+    lib_hash = hashlib.md5(lib_ctx.library_path.encode()).hexdigest()[:12]
+    
+    thumb_dir = base_cache / lib_hash / subdir
     thumb_dir.mkdir(parents=True, exist_ok=True)
     return thumb_dir
 
 
 @router.get("/media/photo/{photo_id}")
-async def serve_photo(request: Request, photo_id: int):
+async def serve_photo(request: Request, photo_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Serve full-resolution photo by ID."""
-    db_path = request.app.state.db_path
+    db_path = lib_ctx.db_path
     photo_path = _get_photo_path(db_path, photo_id)
 
     if not Path(photo_path).exists():
@@ -73,18 +82,18 @@ async def serve_thumbnail(
     request: Request,
     photo_id: int,
     size: int = Query(400),
+    lib_ctx: LibraryContext = Depends(get_db_path),
 ):
     """Serve a resized WebP thumbnail with disk caching."""
-    db_path = request.app.state.db_path
-
+    db_path = lib_ctx.db_path
     if size not in VALID_THUMB_SIZES:
         raise HTTPException(
             status_code=400,
             detail={"error": f"Invalid size. Must be one of {VALID_THUMB_SIZES}"},
         )
 
-    # Check cache first
-    thumb_dir = _ensure_thumb_dir(db_path, str(size))
+    # Check scoped cache first
+    thumb_dir = _ensure_thumb_dir(lib_ctx, str(size))
     cache_path = thumb_dir / f"{photo_id}.webp"
 
     if cache_path.exists():
@@ -113,12 +122,11 @@ async def serve_thumbnail(
 
 
 @router.get("/media/face/{face_id}")
-async def serve_face_crop(request: Request, face_id: int):
+async def serve_face_crop(request: Request, face_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Serve a cropped face image from a source photo."""
-    db_path = request.app.state.db_path
-
-    # Check face crop cache
-    face_dir = _ensure_thumb_dir(db_path, "faces")
+    db_path = lib_ctx.db_path
+    # Check face crop cache (scoped to library)
+    face_dir = _ensure_thumb_dir(lib_ctx, "faces")
     cache_path = face_dir / f"{face_id}.webp"
 
     if cache_path.exists():

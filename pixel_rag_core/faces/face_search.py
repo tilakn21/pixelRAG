@@ -6,12 +6,24 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-from pixel_rag_core.faces.face_indexer import _app
+# Lazy-loaded InsightFace model for face search (separate from indexer)
+_search_app = None
 
-def find_person_by_image(db_path: str, image_bytes: bytes) -> Dict[str, Any]:
+def _get_search_app():
+    global _search_app
+    if _search_app is None:
+        from insightface.app import FaceAnalysis
+        _search_app = FaceAnalysis(
+            name='buffalo_l',
+            providers=['CPUExecutionProvider']
+        )
+        _search_app.prepare(ctx_id=-1, det_size=(640, 640), det_thresh=0.5)
+    return _search_app
+
+def find_person_by_image(db_path: str, folder_root: str, image_bytes: bytes) -> Dict[str, Any]:
     """
-    Extracts face from uploaded image bytes, compares it against the local gallery,
-    and returns the best matching person_id.
+    Extracts face from uploaded image bytes, compares it against the local gallery
+    scoped to the current library, and returns the best matching person_id.
     """
     try:
         pil_img = Image.open(io.BytesIO(image_bytes))
@@ -23,7 +35,8 @@ def find_person_by_image(db_path: str, image_bytes: bytes) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Invalid image format: {e}"}
 
-    faces = _app.get(img)
+    app = _get_search_app()
+    faces = app.get(img)
     
     if not faces:
         return {"error": "No faces detected in the uploaded image."}
@@ -36,7 +49,7 @@ def find_person_by_image(db_path: str, image_bytes: bytes) -> Dict[str, Any]:
         
     emb_norm = emb / (np.linalg.norm(emb) + 1e-10)
 
-    # ── Load Identity Gallery from DB ──
+    # ── Load Identity Gallery from DB (Scoped to Library) ──
     conn = sqlite3.connect(db_path, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     
@@ -46,8 +59,9 @@ def find_person_by_image(db_path: str, image_bytes: bytes) -> Dict[str, Any]:
         FROM faces f
         JOIN face_embeddings fe ON f.id = fe.face_id
         JOIN people p ON f.person_id = p.id
-        WHERE f.is_representative = 1 AND p.confirmed = 1
-        """
+        WHERE f.is_representative = 1 AND p.confirmed = 1 AND p.folder_root = ?
+        """,
+        (folder_root,)
     ).fetchall()
     conn.close()
     
@@ -60,7 +74,7 @@ def find_person_by_image(db_path: str, image_bytes: bytes) -> Dict[str, Any]:
     
     # ── 1:N Gallery Matching ──
     for pid, emb_blob, pname in gallery_rows:
-        ref_arr = np.frombuffer(emb_blob, dtype=np.float64)
+        ref_arr = np.frombuffer(emb_blob, dtype=np.float32)
         ref_norm = ref_arr / (np.linalg.norm(ref_arr) + 1e-10)
         sim = float(np.dot(ref_norm, emb_norm))
         

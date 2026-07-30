@@ -4,21 +4,21 @@
 import sqlite3
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
-
+from fastapi import APIRouter, Query, Request, Depends
 from pixel_rag_server.models.schemas import PaginatedPhotos, PhotoResponse
+from pixel_rag_server.dependencies import get_db_path, LibraryContext
 
 router = APIRouter(tags=["photos"])
 
 
 def _get_people_for_photo(conn: sqlite3.Connection, photo_id: int) -> tuple[list[int], list[str]]:
-    """Get all confirmed person IDs and names linked to a photo via faces."""
+    """Get all person IDs and names linked to a photo via faces."""
     rows = conn.execute(
         """
         SELECT DISTINCT p.id, p.name
         FROM faces f
         JOIN people p ON f.person_id = p.id
-        WHERE f.photo_id = ? AND p.confirmed = 1
+        WHERE f.photo_id = ? AND f.person_id IS NOT NULL
         """,
         (photo_id,),
     ).fetchall()
@@ -34,12 +34,13 @@ async def list_photos(
     page_size: int = Query(50, ge=1, le=200),
     scene_category: Optional[str] = Query(None),
     person_id: Optional[int] = Query(None),
+    person_ids: Optional[str] = Query(None, description="Comma-separated list of person IDs to require ALL to be present"),
     sort_by: str = Query("taken_at", pattern="^(taken_at|filename|scene_confidence)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    lib_ctx: LibraryContext = Depends(get_db_path),
 ):
     """Return paginated photos with optional filtering."""
-    db_path = request.app.state.db_path
-
+    db_path = lib_ctx.db_path
     conn = sqlite3.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
@@ -59,6 +60,17 @@ async def list_photos(
             "p.id IN (SELECT photo_id FROM faces WHERE person_id = ?)"
         )
         params.append(person_id)
+        
+    if person_ids is not None:
+        try:
+            ids = [int(x.strip()) for x in person_ids.split(",")]
+            for pid in ids:
+                where_clauses.append(
+                    "p.id IN (SELECT photo_id FROM faces WHERE person_id = ?)"
+                )
+                params.append(pid)
+        except ValueError:
+            pass
 
     where_sql = " AND ".join(where_clauses)
     if where_sql:
@@ -97,6 +109,16 @@ async def list_photos(
         
         person_ids, person_names = _get_people_for_photo(conn, photo_id_val)
 
+        # Optimization: if filtering by person, find the specific face ID for the UI alignment
+        matched_face_id = None
+        if person_id is not None:
+            f_row = conn.execute(
+                "SELECT id FROM faces WHERE photo_id = ? AND person_id = ? LIMIT 1",
+                (photo_id_val, person_id)
+            ).fetchone()
+            if f_row:
+                matched_face_id = f_row[0]
+
         items.append(
             PhotoResponse(
                 id=photo_id_val,
@@ -117,6 +139,9 @@ async def list_photos(
                 longitude=row["longitude"],
                 description=row["description"],
                 scene_tags=[t.strip() for t in row["scene_tags"].split(",")] if row["scene_tags"] else [],
+                matched_face_id=matched_face_id,
+                thumbnail_url=f"/api/media/thumb/{photo_id_val}?size=400&h={lib_ctx.lib_hash}",
+                lib_hash=lib_ctx.lib_hash
             )
         )
 

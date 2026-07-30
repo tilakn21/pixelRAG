@@ -10,6 +10,7 @@ interface SearchBarProps {
   onImageSearch?: (file: File) => void;
   loading?: boolean;
   initialValue?: string;
+  libHash?: string;
 }
 
 const PROMPTS = [
@@ -24,6 +25,7 @@ export default function SearchBar({
   onImageSearch,
   loading,
   initialValue = "",
+  libHash,
 }: SearchBarProps) {
   const [value, setValue] = useState("");
   const [suggestions, setSuggestions] = useState<SearchSuggestions | null>(null);
@@ -33,8 +35,8 @@ export default function SearchBar({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetchSearchSuggestions().then(setSuggestions).catch(() => {});
-  }, []);
+    fetchSearchSuggestions(libHash).then(setSuggestions).catch(() => {});
+  }, [libHash]);
 
   useEffect(() => {
     setValue(initialValue);
@@ -149,7 +151,7 @@ export default function SearchBar({
                   key={name}
                   type="button"
                   className="suggestion-button"
-                  style={{ fontFamily: "var(--font-pixel)", fontSize: "1.1rem", borderRadius: "8px", padding: "8px 12px" }}
+                  style={{ fontFamily: "var(--font-pixel)", fontSize: "1.1rem", borderRadius: "8px", padding: "8px 12px", color: "var(--obsidian)" }}
                   onClick={() => handleSuggestionClick(`Photos of ${name}`)}
                 >
                   <span style={{ color: "var(--electric-blue)", marginRight: "8px" }}>&gt;&gt;</span>
@@ -168,7 +170,7 @@ export default function SearchBar({
                   key={city}
                   type="button"
                   className="suggestion-button"
-                  style={{ fontFamily: "var(--font-pixel)", fontSize: "1.1rem", borderRadius: "8px", padding: "8px 12px" }}
+                  style={{ fontFamily: "var(--font-pixel)", fontSize: "1.1rem", borderRadius: "8px", padding: "8px 12px", color: "var(--obsidian)" }}
                   onClick={() => handleSuggestionClick(`Photos from ${city}`)}
                 >
                   <span style={{ color: "var(--sun-yellow)", marginRight: "8px" }}>&gt;&gt;</span>

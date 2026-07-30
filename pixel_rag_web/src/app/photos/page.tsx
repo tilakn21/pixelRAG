@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import AsciiField from "@/components/AsciiField";
 import CategoryPills from "@/components/CategoryPills";
 import PhotoGrid from "@/components/PhotoGrid";
-import { startSync, fetchHealth, fetchSyncStatus, setLibraryPath } from "@/lib/api";
+import { startSync, fetchHealth, fetchSyncStatus, setLibraryPath, deleteLibrary } from "@/lib/api";
 import { formatLibraryLabel, formatCompactNumber } from "@/lib/display";
 import type { HealthResponse, SyncStatus } from "@/lib/types";
 
@@ -20,6 +20,7 @@ function ArchiveContent() {
   const [libraryInput, setLibraryInput] = useState("");
   const [setupSaving, setSetupSaving] = useState(false);
   const [isEditingFolder, setIsEditingFolder] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     fetchHealth()
@@ -60,6 +61,11 @@ function ArchiveContent() {
       setSyncStatus({
         status: "running",
         progress: 0,
+        step_name: "INITIALIZING",
+        step_index: 1,
+        total_steps: 6,
+        sub_progress: 0,
+        sub_message: "Preparing archive scan...",
         current_file: "Initializing pipeline",
         photos_processed: 0,
         photos_total: 0,
@@ -70,6 +76,26 @@ function ArchiveContent() {
       setError(caughtError instanceof Error ? caughtError.message : "Sync could not start.");
     }
   }, []);
+
+  const handleLibraryAction = async (action: 'dismount' | 'wipe') => {
+    if (!health?.library_path) return;
+    
+    const confirmMsg = action === 'wipe' 
+      ? `PERMANENTLY DELETE all AI metadata for this folder?\n\nThis will wipe your face clusters and tags for good.`
+      : `Dismount this library from PixelRAG?\n\n(No files will be deleted)`;
+
+    if (!confirm(confirmMsg)) return;
+
+    setIsDeleting(true);
+    try {
+      await deleteLibrary(health.library_path, action === 'wipe');
+      window.location.reload();
+    } catch (err: any) {
+      setError(err instanceof Error ? err.message : "Library action failed.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleSetup = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -155,16 +181,34 @@ function ArchiveContent() {
         </article>
 
         {syncing && syncStatus ? (
-          <section className="panel" style={{ gridColumn: "span 12", background: "#f0f0f0" }}>
-            <div className="status-console__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+          <section className="panel animate-reveal stagger-3" style={{ gridColumn: "span 12", background: "#fff", border: "var(--border-thick)", borderRadius: "16px" }}>
+            <div className="status-console__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "20px" }}>
               <div>
-                <span className="status-console__label" style={{ fontFamily: "var(--font-pixel)", opacity: 0.6 }}>SYNC_ACTIVITY</span>
-                <h2 className="panel__heading" style={{ fontSize: "1.2rem", margin: "4px 0" }}>{syncStatus.current_file ?? "Processing..."}</h2>
+                <span className="status-console__label" style={{ fontFamily: "var(--font-pixel)", fontSize: "0.75rem", background: "var(--obsidian)", color: "#fff", padding: "4px 8px", borderRadius: "4px" }}>
+                  STEP {syncStatus.step_index}/{syncStatus.total_steps}: {syncStatus.step_name}
+                </span>
+                <h2 className="panel__heading" style={{ fontSize: "1.4rem", margin: "12px 0 4px 0", letterSpacing: "-0.02em" }}>
+                  {syncStatus.sub_message ?? "Preparing engine..."}
+                </h2>
               </div>
-              <span style={{ fontFamily: "var(--font-pixel)", fontSize: "2rem" }}>{syncStatus.progress}%</span>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontFamily: "var(--font-pixel)", fontSize: "2.5rem", color: "var(--electric-blue)" }}>{syncStatus.progress}%</div>
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", opacity: 0.6 }}>[ {syncStatus.photos_processed} / {syncStatus.photos_total} ] SYNCED</div>
+              </div>
             </div>
-            <div className="status-console__track" style={{ height: "12px", background: "#ddd", border: "var(--border-thin)", borderRadius: "6px", overflow: "hidden" }}>
-              <div className="status-console__bar" style={{ width: `${syncStatus.progress}%`, height: "100%", background: "var(--electric-blue)" }} />
+            
+            <div className="progress-group" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div className="status-console__track" style={{ height: "16px", background: "#eee", borderRadius: "8px", overflow: "hidden", border: "1px solid #ddd" }}>
+                <div className="status-console__bar" style={{ width: `${syncStatus.progress}%`, height: "100%", background: "linear-gradient(90deg, var(--electric-blue), var(--electric-purple))", transition: "width 0.5s cubic-bezier(0.4, 0, 0.2, 1)" }} />
+              </div>
+
+              <div className="sub-progress-area" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", opacity: 0.5, whiteSpace: "nowrap" }}>SUB_TASK_LOAD</span>
+                <div style={{ flexGrow: 1, height: "4px", background: "#f0f0f0", borderRadius: "2px", overflow: "hidden" }}>
+                  <div style={{ width: `${syncStatus.sub_progress}%`, height: "100%", background: "var(--electric-purple)", transition: "width 0.3s ease" }} />
+                </div>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", minWidth: "30px", textAlign: "right" }}>{syncStatus.sub_progress}%</span>
+              </div>
             </div>
           </section>
         ) : null}
@@ -186,8 +230,8 @@ function ArchiveContent() {
           </p>
         </div>
 
-        <div className="hero-actions" style={{ marginTop: "32px", display: "flex", gap: "12px" }}>
-          <button type="button" className="button button--secondary" style={{ borderRadius: "12px", border: "var(--border-thick)" }} onClick={() => void handleSync()} disabled={syncing}>
+        <div className="hero-actions" style={{ marginTop: "32px", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+          <button type="button" className="button button--secondary" style={{ borderRadius: "12px", border: "var(--border-thick)" }} onClick={() => void handleSync()} disabled={syncing || isDeleting}>
             {syncing ? "SYNCING..." : "SYNC_ARCHIVE"}
           </button>
           <button
@@ -198,8 +242,47 @@ function ArchiveContent() {
               setLibraryInput(health?.library_path ?? "");
               setIsEditingFolder((value) => !value);
             }}
+            disabled={isDeleting}
           >
             {isEditingFolder ? "HIDE_EDITOR" : "EDIT_PATH"}
+          </button>
+          
+          <button 
+            onClick={() => handleLibraryAction('dismount')}
+            disabled={isDeleting || syncing}
+            className="button"
+            style={{ 
+              background: "var(--blood-red)", 
+              color: "#fff", 
+              border: "var(--border-thick)", 
+              borderRadius: "12px", 
+              padding: "0 20px",
+              height: "48px",
+              fontSize: "0.85rem", 
+              fontFamily: "var(--font-pixel)",
+              cursor: "pointer"
+            }}
+          >
+            DISMOUNT
+          </button>
+
+          <button 
+            onClick={() => handleLibraryAction('wipe')}
+            disabled={isDeleting || syncing}
+            className="button"
+            style={{ 
+              background: "transparent", 
+              color: "var(--blood-red)", 
+              border: "2px solid var(--blood-red)", 
+              borderRadius: "12px", 
+              padding: "0 20px",
+              height: "48px",
+              fontSize: "0.85rem", 
+              fontFamily: "var(--font-pixel)",
+              cursor: "pointer"
+            }}
+          >
+            WIPE_AI
           </button>
         </div>
       </article>
@@ -233,23 +316,40 @@ function ArchiveContent() {
       ) : null}
 
       {syncStatus && syncing ? (
-        <section className="panel" style={{ gridColumn: "span 12", background: "#f8f8f8" }}>
-          <div className="status-console__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <section className="panel" style={{ gridColumn: "span 12", background: "#fff", border: "var(--border-thick)", borderRadius: "16px", boxShadow: "var(--shadow-md)" }}>
+          <div className="status-console__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "16px" }}>
             <div>
-              <span className="status-console__label" style={{ fontFamily: "var(--font-pixel)", opacity: 0.6 }}>PIPELINE_ACTIVITY</span>
-              <h2 className="panel__heading" style={{ fontSize: "1.2rem", margin: "4px 0" }}>{syncStatus.current_file ?? "Scanning library..."}</h2>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <span style={{ fontFamily: "var(--font-pixel)", fontSize: "0.7rem", background: "var(--electric-blue)", color: "#fff", padding: "2px 6px", borderRadius: "4px" }}>
+                  {syncStatus.step_name}
+                </span>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", opacity: 0.5 }}>
+                  STEP {syncStatus.step_index} OF {syncStatus.total_steps}
+                </span>
+              </div>
+              <h2 style={{ fontSize: "1.1rem", margin: "8px 0 0 0", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "600px" }}>
+                {syncStatus.sub_message ?? "Synchronizing..."}
+              </h2>
             </div>
-            <span style={{ fontFamily: "var(--font-pixel)", fontSize: "2rem" }}>{syncStatus.progress}%</span>
+            <div style={{ textAlign: "right" }}>
+                <div style={{ fontFamily: "var(--font-pixel)", fontSize: "2rem", color: "var(--electric-blue)", lineHeight: 1 }}>{syncStatus.progress}%</div>
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.7rem", opacity: 0.5, marginTop: "4px" }}>
+                  {syncStatus.photos_processed} / {syncStatus.photos_total} ITEMS
+                </div>
+            </div>
           </div>
 
-          <div style={{ display: "flex", gap: "20px", fontFamily: "var(--font-mono)", fontSize: "0.8rem", marginBottom: "12px", textTransform: "uppercase" }}>
-            <span>{syncStatus.photos_processed} PROCESSED</span>
-            <span>{syncStatus.photos_total} TOTAL_FRAMES</span>
-            <span style={{ color: "var(--electric-blue)" }}>[ {syncStatus.status} ]</span>
-          </div>
-
-          <div className="status-console__track" style={{ height: "12px", background: "#ddd", border: "var(--border-thin)", borderRadius: "6px", overflow: "hidden" }}>
-            <div className="status-console__bar" style={{ width: `${syncStatus.progress}%`, height: "100%", background: "var(--electric-blue)" }} />
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div className="status-console__track" style={{ height: "12px", background: "#eee", borderRadius: "6px", overflow: "hidden" }}>
+              <div className="status-console__bar" style={{ width: `${syncStatus.progress}%`, height: "100%", background: "var(--electric-blue)", transition: "width 0.4s ease" }} />
+            </div>
+            
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div style={{ flexGrow: 1, height: "3px", background: "#f5f5f5", borderRadius: "2px", overflow: "hidden" }}>
+                <div style={{ width: `${syncStatus.sub_progress}%`, height: "100%", background: "var(--electric-purple)", transition: "width 0.2s ease" }} />
+              </div>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", opacity: 0.4 }}>SUB_{syncStatus.sub_progress}%</span>
+            </div>
           </div>
         </section>
       ) : null}

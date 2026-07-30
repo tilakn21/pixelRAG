@@ -11,9 +11,10 @@ import type {
   SearchResponse,
   SearchSuggestions,
   SyncStatus,
+  TagByPhotoResponse,
 } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 class ApiError extends Error {
   status: number;
@@ -58,16 +59,20 @@ export function fetchPhotos(params: {
   page_size?: number;
   scene_category?: string;
   person_id?: number;
+  person_ids?: string;
   sort_by?: string;
   sort_order?: string;
+  libHash?: string;
 }): Promise<PaginatedPhotos> {
   const sp = new URLSearchParams();
   if (params.page) sp.set("page", String(params.page));
   if (params.page_size) sp.set("page_size", String(params.page_size));
   if (params.scene_category) sp.set("scene_category", params.scene_category);
   if (params.person_id) sp.set("person_id", String(params.person_id));
+  if (params.person_ids) sp.set("person_ids", params.person_ids);
   if (params.sort_by) sp.set("sort_by", params.sort_by);
   if (params.sort_order) sp.set("sort_order", params.sort_order);
+  if (params.libHash) sp.set("h", params.libHash);
   return request<PaginatedPhotos>(`/api/photos?${sp.toString()}`);
 }
 
@@ -88,18 +93,20 @@ export function getFaceUrl(faceId: number, libHash?: string): string {
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
-export function searchPhotos(query: string): Promise<SearchResponse> {
-  return request<SearchResponse>("/api/search", {
+export function searchPhotos(query: string, libHash?: string): Promise<SearchResponse> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<SearchResponse>(`/api/search${sp}`, {
     method: "POST",
     body: JSON.stringify({ query }),
   });
 }
 
-export function searchByFace(file: File): Promise<SearchResponse> {
+export function searchByFace(file: File, libHash?: string): Promise<SearchResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  const sp = libHash ? `?h=${libHash}` : "";
 
-  return fetch(`${API_URL}/api/search/face`, {
+  return fetch(`${API_URL}/api/search/face${sp}`, {
     method: "POST",
     body: formData,
     // Note: Don't set Content-Type header, fetch will set it with boundary
@@ -112,33 +119,41 @@ export function searchByFace(file: File): Promise<SearchResponse> {
   });
 }
 
-export function fetchSearchSuggestions(): Promise<SearchSuggestions> {
-  return request<SearchSuggestions>("/api/search/suggestions");
+export function fetchSearchSuggestions(libHash?: string): Promise<SearchSuggestions> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<SearchSuggestions>(`/api/search/suggestions${sp}`);
 }
 
 // ── Sync ──────────────────────────────────────────────────────────────────────
-export function startSync(): Promise<{ message: string; status: string }> {
-  return request<{ message: string; status: string }>("/api/sync/start", {
+export function startSync(libHash?: string): Promise<{ message: string; status: string }> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<{ message: string; status: string }>(`/api/sync/start${sp}`, {
     method: "POST",
   });
 }
 
-export function fetchSyncStatus(): Promise<SyncStatus> {
-  return request<SyncStatus>("/api/sync/status");
+export function fetchSyncStatus(libHash?: string): Promise<SyncStatus> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<SyncStatus>(`/api/sync/status${sp}`);
 }
 
 // ── Identities ────────────────────────────────────────────────────────────────
-export function fetchIdentities(confirmedOnly?: boolean): Promise<Person[]> {
-  const sp = confirmedOnly ? "?confirmed_only=true" : "";
-  return request<Person[]>(`/api/identities${sp}`);
+export function fetchIdentities(confirmedOnly?: boolean, libHash?: string): Promise<Person[]> {
+  const sp = new URLSearchParams();
+  if (confirmedOnly) sp.set("confirmed_only", "true");
+  if (libHash) sp.set("h", libHash);
+  const qs = sp.toString() ? `?${sp.toString()}` : "";
+  return request<Person[]>(`/api/identities${qs}`);
 }
 
-export function fetchPerson(personId: number): Promise<Person> {
-  return request<Person>(`/api/identities/${personId}`);
+export function fetchPerson(personId: number, libHash?: string): Promise<Person> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<Person>(`/api/identities/${personId}${sp}`);
 }
 
-export function renamePerson(personId: number, name: string): Promise<Person> {
-  return request<Person>(`/api/identities/${personId}`, {
+export function renamePerson(personId: number, name: string, libHash?: string): Promise<Person> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<Person>(`/api/identities/${personId}${sp}`, {
     method: "PATCH",
     body: JSON.stringify({ name }),
   });
@@ -146,20 +161,36 @@ export function renamePerson(personId: number, name: string): Promise<Person> {
 
 export function mergePersons(
   targetId: number,
-  sourceId: number
+  sourceId: number,
+  libHash?: string
 ): Promise<Person> {
-  return request<Person>(`/api/identities/${targetId}/merge`, {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<Person>(`/api/identities/${targetId}/merge${sp}`, {
     method: "POST",
     body: JSON.stringify({ source_person_id: sourceId }),
   });
 }
 
+export function batchMergePersons(
+  targetId: number,
+  sourceIds: number[],
+  libHash?: string
+): Promise<Person> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<Person>(`/api/identities/${targetId}/batch-merge${sp}`, {
+    method: "POST",
+    body: JSON.stringify({ source_person_ids: sourceIds }),
+  });
+}
+
 export function splitCluster(
   personId: number,
-  faceIds: number[]
+  faceIds: number[],
+  libHash?: string
 ): Promise<{ original: Person; new: Person }> {
+  const sp = libHash ? `?h=${libHash}` : "";
   return request<{ original: Person; new: Person }>(
-    `/api/identities/${personId}/split`,
+    `/api/identities/${personId}/split${sp}`,
     {
       method: "POST",
       body: JSON.stringify({ face_ids: faceIds }),
@@ -167,21 +198,52 @@ export function splitCluster(
   );
 }
 
-export function fetchSimilarPersons(personId: number): Promise<Person[]> {
-  return request<Person[]>(`/api/identities/${personId}/similar`);
+export function fetchSimilarPersons(personId: number, libHash?: string): Promise<Person[]> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<Person[]>(`/api/identities/${personId}/similar${sp}`);
 }
 
 export function fetchPersonFaces(
-  personId: number
+  personId: number,
+  libHash?: string
 ): Promise<{ face_ids: number[] }> {
+  const sp = libHash ? `?h=${libHash}` : "";
   return request<{ face_ids: number[] }>(
-    `/api/identities/${personId}/faces`
+    `/api/identities/${personId}/faces${sp}`
   );
 }
 
-export function deletePerson(personId: number): Promise<{ message: string; person_id: number }> {
-  return request<{ message: string; person_id: number }>(`/api/identities/${personId}`, {
+export function deletePerson(personId: number, libHash?: string): Promise<{ message: string; person_id: number }> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<{ message: string; person_id: number }>(`/api/identities/${personId}${sp}`, {
     method: "DELETE",
+  });
+}
+
+export function batchDissolve(personIds: number[], libHash?: string): Promise<{ message: string }> {
+  const sp = libHash ? `?h=${libHash}` : "";
+  return request<{ message: string }>(`/api/identities/batch-delete${sp}`, {
+    method: "POST",
+    body: JSON.stringify({ person_ids: personIds }),
+  });
+}
+
+export function tagByPhoto(file: File, name: string, libHash?: string): Promise<TagByPhotoResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("name", name);
+  const sp = libHash ? `?h=${libHash}` : "";
+
+  return fetch(`${API_URL}/api/identities/tag-by-photo${sp}`, {
+    method: "POST",
+    body: formData,
+    // Note: Don't set Content-Type header, fetch will set it with boundary
+  }).then(async (res) => {
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body.detail?.error ?? body.detail ?? "Tag by photo failed");
+    }
+    return res.json();
   });
 }
 
@@ -195,4 +257,19 @@ export function setLibraryPath(path: string): Promise<{ status: string; library_
 
 export function fetchLibraries(): Promise<{ libraries: string[] }> {
   return request<{ libraries: string[] }>("/api/config/libraries");
+}
+
+export function browseLibrary(): Promise<{ path: string | null }> {
+  return request<{ path: string | null }>("/api/config/browse", {
+    method: "POST",
+  });
+}
+
+export function deleteLibrary(path: string, wipeData: boolean = false): Promise<{ status: string; deleted: string }> {
+  const sp = new URLSearchParams();
+  sp.set("path", path);
+  if (wipeData) sp.set("wipe_data", "true");
+  return request<{ status: string; deleted: string }>(`/api/config/library?${sp.toString()}`, {
+    method: "DELETE",
+  });
 }
