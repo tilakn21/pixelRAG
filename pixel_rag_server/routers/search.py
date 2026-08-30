@@ -15,33 +15,46 @@ from pixel_rag_server.models.schemas import (
     SearchSuggestions,
 )
 from pixel_rag_server.dependencies import get_db_path, LibraryContext
+from pixel_rag_server.services.library_manager import get_sync_version
+from pixel_rag_server.routers.photos import parse_scene_tags
+from pixel_rag_server.services.db import get_conn
 
 router = APIRouter(tags=["search"])
 
-def _map_photos(db_path: str, photos: list, lib_hash: str) -> list[PhotoResponse]:
+def _map_photos(db_path: str, photos: list, lib_ctx: LibraryContext) -> list[PhotoResponse]:
     """Helper to convert list of raw photo dicts into PhotoResponse objects."""
     photo_responses = []
     if not photos:
         return photo_responses
 
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    lib_hash = lib_ctx.lib_hash
+    thumb_bust = f"{lib_hash}_{get_sync_version(lib_ctx.library_path)}"
+
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
+
+    # Batch-load confirmed people for all result photos (avoids N+1)
+    photo_ids = [photo.get("id", 0) for photo in photos]
+    people_map: dict[int, list[tuple[int, str]]] = {pid: [] for pid in photo_ids}
+    for i in range(0, len(photo_ids), 500):
+        chunk = photo_ids[i:i + 500]
+        ph = ",".join("?" * len(chunk))
+        for r in conn.execute(
+            f"""
+            SELECT DISTINCT f.photo_id, p.id, p.name
+            FROM faces f
+            JOIN people p ON f.person_id = p.id
+            WHERE f.photo_id IN ({ph}) AND p.confirmed = 1
+            """,
+            chunk,
+        ):
+            people_map[r[0]].append((r[1], r[2]))
 
     for photo in photos:
         photo_id = photo.get("id", 0)
         path = photo.get("path", "")
         filename = path.rsplit("/", 1)[-1] if "/" in path else path
-
-        person_rows = conn.execute(
-            """
-            SELECT DISTINCT p.id, p.name 
-            FROM faces f
-            JOIN people p ON f.person_id = p.id
-            WHERE f.photo_id = ? AND p.confirmed = 1 AND f.person_id IS NOT NULL
-            """,
-            (photo_id,),
-        ).fetchall()
+        linked = people_map.get(photo_id, [])
 
         photo_responses.append(
             PhotoResponse(
@@ -55,15 +68,15 @@ def _map_photos(db_path: str, photos: list, lib_hash: str) -> list[PhotoResponse
                 state=photo.get("state"),
                 country=photo.get("country"),
                 has_faces=bool(photo.get("has_faces", 0)),
-                person_ids=[r[0] for r in person_rows],
-                person_names=[r[1] for r in person_rows],
+                person_ids=[p[0] for p in linked],
+                person_names=[p[1] for p in linked],
                 camera_make=photo.get("camera_make"),
                 camera_model=photo.get("camera_model"),
                 latitude=photo.get("latitude"),
                 longitude=photo.get("longitude"),
                 description=photo.get("description"),
-                scene_tags=[t.strip() for t in photo.get("scene_tags", "").split(",")] if photo.get("scene_tags") else [],
-                thumbnail_url=f"/api/media/thumb/{photo_id}?size=400&h={lib_hash}",
+                scene_tags=parse_scene_tags(photo.get("scene_tags")),
+                thumbnail_url=f"/api/media/thumb/{photo_id}?size=400&h={thumb_bust}",
                 lib_hash=lib_hash,
                 semantic_score=photo.get("semantic_score")
             )
@@ -103,7 +116,7 @@ def search_photos(request: Request, body: SearchQuery, lib_ctx: LibraryContext =
     # Build response using helper
     photo_responses = []
     if results and "photos" in results:
-        photo_responses = _map_photos(db_path, results["photos"], lib_ctx.lib_hash)
+        photo_responses = _map_photos(db_path, results["photos"], lib_ctx)
 
     # Extract the intent from core results
     intent_data = results.get("intent", {}) if results else {}
@@ -158,7 +171,7 @@ def search_by_face(request: Request, file: UploadFile = File(...), lib_ctx: Libr
     photos = engine.execute_query(sql_data["sql"], sql_data["params"])
     
     # 3. Build response
-    photo_responses = _map_photos(db_path, photos, lib_ctx.lib_hash)
+    photo_responses = _map_photos(db_path, photos, lib_ctx)
     
     elapsed_ms = int((time.time() - start) * 1000)
     intent = SearchIntent(names=[person_name])
@@ -176,8 +189,7 @@ def search_by_face(request: Request, file: UploadFile = File(...), lib_ctx: Libr
 def get_search_suggestions(request: Request, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Return person names and cities for autocomplete."""
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
 
     names = [
         r[0]

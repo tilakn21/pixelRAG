@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchHealth, fetchPhotos, getPhotoUrl } from "@/lib/api";
+import { fetchHealth, fetchPersonPhotoIds, fetchPhotos, getPhotoUrl } from "@/lib/api";
+import SelectionBar from "./SelectionBar";
 import {
   formatDate,
   formatDateTime,
@@ -14,9 +15,18 @@ import PhotoCard from "./PhotoCard";
 interface PhotoGridProps {
   photos?: Photo[];
   category?: string | null;
+  /** Enables "select all in cluster" and cluster-wide delete/export. */
+  personId?: number;
+  /** Called after photos are deleted so the parent can refresh. */
+  onPhotosChanged?: () => void;
 }
 
-export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridProps) {
+export default function PhotoGrid({
+  photos: staticPhotos,
+  category,
+  personId,
+  onPhotosChanged,
+}: PhotoGridProps) {
   const [photos, setPhotos] = useState<Photo[]>(staticPhotos ?? []);
   const [libHash, setLibHash] = useState("");
   const [page, setPage] = useState(1);
@@ -24,9 +34,54 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
   const [loading, setLoading] = useState(false);
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [toast, setToast] = useState<string | null>(null);
+  const [total, setTotal] = useState<number>(0);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const touchStartX = useRef(0);
   const isPaginated = !staticPhotos;
+
+  const toggle = useCallback((id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const exitSelect = useCallback(() => {
+    setSelectMode(false);
+    setSelected(new Set());
+  }, []);
+
+  // "Select all" means every photo that matches, not just the ones scrolled
+  // into view — otherwise deleting a cluster would silently miss most of it.
+  const selectAll = useCallback(async () => {
+    if (personId) {
+      try {
+        const r = await fetchPersonPhotoIds(personId, libHash);
+        setSelected(new Set(r.photo_ids));
+        return;
+      } catch {
+        /* fall through to loaded-only */
+      }
+    }
+    setSelected(new Set(photos.map((p) => p.id)));
+  }, [personId, libHash, photos]);
+
+  const afterMutation = useCallback(
+    (msg: string) => {
+      setToast(msg);
+      const removed = selected;
+      setPhotos((cur) => cur.filter((p) => !removed.has(p.id)));
+      exitSelect();
+      onPhotosChanged?.();
+      window.setTimeout(() => setToast(null), 6000);
+    },
+    [selected, exitSelect, onPhotosChanged]
+  );
 
   const loadPage = useCallback(
     async (targetPage: number, replace: boolean) => {
@@ -47,6 +102,7 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
         const data = await fetchPhotos(params);
         setPhotos((current) => (replace ? data.items : [...current, ...data.items]));
         setHasNext(data.has_next);
+        setTotal(data.total);
         setPage(targetPage + 1);
       } finally {
         setLoading(false);
@@ -159,13 +215,65 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
 
   return (
     <>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          marginBottom: 14,
+          flexWrap: "wrap",
+        }}
+      >
+        <button
+          type="button"
+          className="button button--secondary"
+          style={{
+            borderRadius: 10,
+            border: "var(--border-thick)",
+            background: selectMode ? "var(--electric-purple)" : "#fff",
+            color: selectMode ? "#fff" : "var(--obsidian)",
+            fontFamily: "var(--font-pixel)",
+            padding: "8px 16px",
+          }}
+          onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+        >
+          {selectMode ? "[ EXIT_SELECT ]" : "[ SELECT ]"}
+        </button>
+        {selectMode && (
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: ".78rem", opacity: 0.65 }}>
+            click photos to select · {selected.size} chosen
+          </span>
+        )}
+        {toast && (
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: ".78rem",
+              background: "var(--neon-green)",
+              color: "#000",
+              padding: "6px 12px",
+              borderRadius: 8,
+              border: "1px solid #000",
+            }}
+          >
+            ✓ {toast}
+          </span>
+        )}
+      </div>
+
       <div className="photo-grid--masonry">
         {photos.map((photo, index) => (
           <PhotoCard
             key={photo.id}
             photo={photo}
             matchedFaceId={photo.matched_face_id}
+            selectable={selectMode}
+            selected={selected.has(photo.id)}
             onClick={() => {
+              if (selectMode) {
+                toggle(photo.id);
+                return;
+              }
               setLightboxIdx(index);
               setShowDetails(false);
             }}
@@ -183,6 +291,16 @@ export default function PhotoGrid({ photos: staticPhotos, category }: PhotoGridP
             ))
           : null}
       </div>
+
+      <SelectionBar
+        selected={Array.from(selected)}
+        totalAvailable={personId ? Math.max(total, photos.length) : isPaginated ? Math.max(total, photos.length) : photos.length}
+        onSelectAll={selectAll}
+        onClear={exitSelect}
+        onDone={afterMutation}
+        libHash={libHash}
+        personId={personId}
+      />
 
       {isPaginated && hasNext ? <div ref={sentinelRef} style={{ height: 1 }} /> : null}
 

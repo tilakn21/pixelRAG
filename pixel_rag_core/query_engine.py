@@ -27,10 +27,28 @@ VALID_SCENE_CATEGORIES = [
 ]
 
 
+# Models this API key can actually use, best first. The previous default
+# (meta-llama/llama-4-scout-17b-16e-instruct) was decommissioned and returned
+# 404 on every search — silently, so search appeared to "work" while returning
+# the entire library. Measured on real queries against this taxonomy:
+#     openai/gpt-oss-120b  6/7 correct, 1.45 s   <- default (got names right)
+#     openai/gpt-oss-20b   6/7 correct, 0.75 s   (missed an unusual first name)
+#     allam-2-7b           6/7 correct, 0.12 s   (fast fallback)
+#     groq/compound        1/7 — does not reliably emit JSON, do not use
+# Re-probe with scratch/probe_groq_models.py if Groq rotates its lineup again.
+GROQ_MODEL_CHAIN = [
+    os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+    "openai/gpt-oss-20b",
+    "allam-2-7b",
+]
+
+
 class GraphQueryEngine:
     def __init__(self, db_path: str = str(DB_PATH)):
         self.db_path = Path(db_path)
-        self.groq_model = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+        self.groq_model = GROQ_MODEL_CHAIN[0]
+        # de-duplicated, order preserved
+        self.model_chain = list(dict.fromkeys(GROQ_MODEL_CHAIN))
         
         # Initialize Groq
         try:
@@ -129,36 +147,59 @@ class GraphQueryEngine:
         - scene_category should be null when the user does not mention any content type.
         '''
 
+        # `parse_ok` distinguishes "the user asked for everything" from "we could
+        # not understand the query". Without it, a failed parse produced an empty
+        # intent, which built `SELECT p.* FROM photos` with no WHERE clause and
+        # returned all 28,512 photos as if they were search results.
+        def _empty(reason: str):
+            return {"names": [], "date": "", "location": "", "scene_category": None,
+                    "semantic_query": "", "strict": True, "exclusive": False,
+                    "parse_ok": False, "parse_error": reason}
+
         if not self.groq_client:
-            print("[PixelRAG] No Groq Client found. Cannot parse query.")
-            return {"names": [], "date": "", "location": "", "scene_category": None, "semantic_query": "", "strict": True, "exclusive": False}
+            print("[PixelRAG] No Groq client (GROQ_API_KEY missing). Cannot parse query.")
+            return _empty("Search needs GROQ_API_KEY to understand your query.")
 
-        print(f"[PixelRAG] Querying Groq ({self.groq_model}) to parse intent...")
-        try:
-            completion = self.groq_client.chat.completions.create(
-                model=self.groq_model,
-                messages=[
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": f"Extract parameters from this query: {prompt}"}
-                ],
-                temperature=0.0,
-                response_format={"type": "json_object"}
-            )
-            data = json.loads(completion.choices[0].message.content)
-            return self._finalize_params(data)
-        except Exception as e:
-            print(f"[PixelRAG] Groq parse failed: {e}")
+        last_err = None
+        for model in self.model_chain:
+            print(f"[PixelRAG] Querying Groq ({model}) to parse intent...")
+            try:
+                completion = self.groq_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_instruction},
+                        {"role": "user", "content": f"Extract parameters from this query: {prompt}"}
+                    ],
+                    temperature=0.0,
+                    response_format={"type": "json_object"}
+                )
+                data = json.loads(completion.choices[0].message.content)
+                if model != self.groq_model:
+                    print(f"[PixelRAG] Fell back to {model} for intent parsing.")
+                params = self._finalize_params(data)
+                params["parse_ok"] = True
+                return params
+            except Exception as e:
+                last_err = e
+                print(f"[PixelRAG] Groq parse failed on {model}: {str(e)[:160]}")
 
-        return {"names": [], "date": "", "location": "", "scene_category": None, "semantic_query": "", "strict": True, "exclusive": False}
+        return _empty(f"Could not parse the query ({str(last_err)[:120]})")
 
     def _finalize_params(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize parsed JSON into standard search parameters."""
+        cat = data.get("scene_category")
+        # The model occasionally invents a category. Anything outside the known
+        # taxonomy is dropped rather than passed into SQL, where it would match
+        # nothing and look like "search is broken".
+        if cat is not None and cat not in VALID_SCENE_CATEGORIES:
+            print(f"[PixelRAG] Ignoring unknown scene_category from model: {cat!r}")
+            cat = None
         return {
-            "names": data.get("names", []),
-            "date": data.get("date", ""),
-            "location": data.get("location", ""),
-            "scene_category": data.get("scene_category"),
-            "semantic_query": data.get("semantic_query", ""),
+            "names": data.get("names", []) or [],
+            "date": data.get("date", "") or "",
+            "location": data.get("location", "") or "",
+            "scene_category": cat,
+            "semantic_query": data.get("semantic_query", "") or "",
             "strict": data.get("strict", True),
             "exclusive": data.get("exclusive", False)
         }
@@ -278,6 +319,27 @@ class GraphQueryEngine:
         # 1. Parse Prompt into structured JSON
         parsed = self.parse_query(prompt)
         print(f"LLM Extracted Params: {json.dumps(parsed, indent=2)}")
+
+        # Refuse to answer a query we could not understand. Returning the whole
+        # library instead of an error is what made search look silently broken.
+        if not parsed.get("parse_ok", True):
+            return {
+                "prompt": prompt, "parsed": parsed, "sql": "", "params": [],
+                "photos": [], "intent": parsed,
+                "error": parsed.get("parse_error", "Could not understand that query."),
+            }
+
+        # A parse that yields no constraint at all would also select everything.
+        # Treat that as "no results" rather than "all results".
+        if not any([parsed.get("names"), parsed.get("date"), parsed.get("location"),
+                    parsed.get("scene_category"), parsed.get("semantic_query")]):
+            return {
+                "prompt": prompt, "parsed": parsed, "sql": "", "params": [],
+                "photos": [], "intent": parsed,
+                "error": ("No searchable filter found in that query. Try a person's "
+                          "name, a place, a year, or a category like documents, "
+                          "screenshots or food."),
+            }
 
         # 2. Fuzzy name resolution
         names = parsed.get("names", [])

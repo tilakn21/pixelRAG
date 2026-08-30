@@ -66,9 +66,11 @@ async def set_library_path(request: Request, body: LibrarySetupRequest):
     # Add to persistent tracker
     add_known_library(lib_path)
     
-    # Update app state
+    # Update app state. DB is stored locally, not beside the photos — see
+    # services/library_manager.get_library_db_path (exFAT/WAL deadlock).
+    from pixel_rag_server.services.library_manager import get_library_db_path
     request.app.state.library_path = lib_path
-    db_path = str(Path(lib_path) / ".pixelrag" / "db.sqlite")
+    db_path = get_library_db_path(lib_path)
     request.app.state.db_path = db_path
     
     # Initialize/Migrate DB

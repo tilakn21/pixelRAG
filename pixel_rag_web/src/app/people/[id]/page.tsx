@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import PhotoGrid from "@/components/PhotoGrid";
 import { deletePerson, fetchPerson, fetchPhotos, fetchHealth } from "@/lib/api";
 import { formatPurityScore } from "@/lib/display";
@@ -29,27 +29,26 @@ export default function PersonPhotosPage({ params }: PageProps) {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const [personData, photosData] = await Promise.all([
-          fetchPerson(personId, libHash),
-          fetchPhotos({ person_id: personId, page_size: 200, libHash }),
-        ]);
-        setPerson(personData);
-        setPhotos(photosData.items);
-      } catch (caughtError) {
-        setError(caughtError instanceof Error ? caughtError.message : "Failed to load this cluster.");
-      } finally {
-        setLoading(false);
-      }
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [personData, photosData] = await Promise.all([
+        fetchPerson(personId, libHash),
+        fetchPhotos({ person_id: personId, page_size: 200, libHash }),
+      ]);
+      setPerson(personData);
+      setPhotos(photosData.items);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Failed to load this cluster.");
+    } finally {
+      setLoading(false);
     }
-
-    void loadData();
   }, [personId, libHash]);
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
   const handleDelete = async () => {
     if (!window.confirm(`Dissolve "${person?.name || "this cluster"}"? Photos will remain, but the identity link will be removed.`)) {
@@ -153,7 +152,11 @@ export default function PersonPhotosPage({ params }: PageProps) {
 
       {photos.length > 0 ? (
         <div style={{ gridColumn: "span 12" }}>
-           <PhotoGrid photos={photos} />
+           <PhotoGrid
+             photos={photos}
+             personId={personId}
+             onPhotosChanged={() => void loadData()}
+           />
         </div>
       ) : (
         <div className="panel" style={{ gridColumn: "span 12", background: "#f8f8f8", textAlign: "center", padding: "60px 20px" }}>

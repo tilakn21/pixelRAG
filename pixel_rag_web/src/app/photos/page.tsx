@@ -5,7 +5,15 @@ import { useSearchParams } from "next/navigation";
 import AsciiField from "@/components/AsciiField";
 import CategoryPills from "@/components/CategoryPills";
 import PhotoGrid from "@/components/PhotoGrid";
-import { startSync, fetchHealth, fetchSyncStatus, setLibraryPath, deleteLibrary } from "@/lib/api";
+import {
+  startSync,
+  fetchHealth,
+  fetchSyncStatus,
+  setLibraryPath,
+  deleteLibrary,
+  fetchCategoryCounts,
+  invalidateHealth,
+} from "@/lib/api";
 import { formatLibraryLabel, formatCompactNumber } from "@/lib/display";
 import type { HealthResponse, SyncStatus } from "@/lib/types";
 
@@ -21,6 +29,7 @@ function ArchiveContent() {
   const [setupSaving, setSetupSaving] = useState(false);
   const [isEditingFolder, setIsEditingFolder] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>();
 
   useEffect(() => {
     fetchHealth()
@@ -28,6 +37,9 @@ function ArchiveContent() {
       .catch(() => {
         setError("PixelRAG could not reach the backend. Start the FastAPI service, then refresh.");
       });
+    fetchCategoryCounts()
+      .then((d) => setCategoryCounts(d.counts))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -41,8 +53,11 @@ function ArchiveContent() {
         if (status.status === "complete" || status.status === "error") {
           setSyncing(false);
           if (status.status === "complete") {
-            const refreshed = await fetchHealth();
-            setHealth(refreshed);
+            // A finished sync changes photo counts and sync_version, so the
+            // cached health response must be discarded, not reused.
+            invalidateHealth();
+            setHealth(await fetchHealth(true));
+            fetchCategoryCounts().then((d) => setCategoryCounts(d.counts)).catch(() => {});
           }
         }
       } catch {
@@ -63,7 +78,7 @@ function ArchiveContent() {
         progress: 0,
         step_name: "INITIALIZING",
         step_index: 1,
-        total_steps: 6,
+        total_steps: 7,
         sub_progress: 0,
         sub_message: "Preparing archive scan...",
         current_file: "Initializing pipeline",
@@ -374,7 +389,7 @@ function ArchiveContent() {
       ) : null}
 
       <section className="panel" style={{ gridColumn: "span 12", padding: "16px" }}>
-        <CategoryPills active={category} onSelect={setCategory} />
+        <CategoryPills active={category} counts={categoryCounts} onSelect={setCategory} />
       </section>
 
       <div style={{ gridColumn: "span 12" }}>

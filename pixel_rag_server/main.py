@@ -32,7 +32,10 @@ if not LIBRARY_PATH or not Path(LIBRARY_PATH).resolve().is_dir():
     DB_PATH = None
 else:
     LIBRARY_PATH = str(Path(LIBRARY_PATH).resolve())
-    DB_PATH = str(Path(LIBRARY_PATH) / ".pixelrag" / "db.sqlite")
+    # DB lives on local disk, never beside the photos — see
+    # services/library_manager.get_library_db_path for why (exFAT + WAL deadlock).
+    from pixel_rag_server.services.library_manager import get_library_db_path
+    DB_PATH = get_library_db_path(LIBRARY_PATH)
 
 
 @asynccontextmanager
@@ -102,15 +105,65 @@ app = FastAPI(
 # CORS — allow Next.js dev server and local network access
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex="http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?",
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Routers ───────────────────────────────────────────────────────────────────
-from pixel_rag_server.routers import identities, media, photos, search, sync, config
+# ── Request instrumentation ───────────────────────────────────────────────────
+# Logs every request with duration, and loudly flags slow ones. Added while
+# chasing a deadlock that presented only as ECONNRESET in the browser: uvicorn's
+# access log prints AFTER a response completes, so a request that never finishes
+# leaves no trace at all. This logs on entry too, so a hung request is visible.
+import logging
+import time as _time
+from itertools import count as _count
 
+_req_log = logging.getLogger("pixelrag.requests")
+_req_seq = _count(1)
+SLOW_REQUEST_S = float(os.environ.get("PIXELRAG_SLOW_REQUEST_S", "2.0"))
+DEBUG_REQUESTS = os.environ.get("PIXELRAG_DEBUG_REQUESTS", "").lower() in ("1", "true", "yes")
+
+
+@app.middleware("http")
+async def _log_requests(request: Request, call_next):
+    rid = next(_req_seq)
+    path = request.url.path
+    if DEBUG_REQUESTS:
+        print(f"[req {rid}] -> {request.method} {path}", flush=True)
+    t0 = _time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        dt = _time.perf_counter() - t0
+        print(f"[req {rid}] !! {request.method} {path} raised {type(e).__name__}: {e} "
+              f"after {dt:.2f}s", flush=True)
+        raise
+    dt = _time.perf_counter() - t0
+    if dt >= SLOW_REQUEST_S:
+        print(f"[req {rid}] SLOW {request.method} {path} -> {response.status_code} "
+              f"in {dt:.2f}s", flush=True)
+    elif DEBUG_REQUESTS:
+        print(f"[req {rid}] <- {response.status_code} {path} in {dt*1000:.0f}ms", flush=True)
+    return response
+
+
+@app.get("/api/debug/pool", tags=["system"])
+def debug_pool():
+    """Diagnostics: pooled sqlite connections and thread count."""
+    import threading
+    from pixel_rag_server.services.db import pool_size
+    return {
+        "pooled_connections": pool_size(),
+        "threads": threading.active_count(),
+    }
+
+
+# ── Routers ───────────────────────────────────────────────────────────────────
+from pixel_rag_server.routers import identities, media, photos, search, sync, config, manage
+
+app.include_router(manage.router, prefix="/api")
 app.include_router(photos.router, prefix="/api")
 app.include_router(media.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
@@ -135,6 +188,7 @@ def health_check(request: Request):
     from pixel_rag_server.services.library_manager import (
         get_known_libraries,
         get_path_hash,
+        get_sync_version,
     )
     from pathlib import Path
     import os
@@ -160,14 +214,7 @@ def health_check(request: Request):
         except Exception:
             pass
             
-        try:
-            import hashlib
-            lib_hash_12 = hashlib.md5(lib_path.encode()).hexdigest()[:12]
-            face_cache_dir = Path.home() / ".pixelrag" / "thumbs" / lib_hash_12 / "faces"
-            if face_cache_dir.exists():
-                sync_version = int(face_cache_dir.stat().st_mtime)
-        except Exception:
-            pass
+        sync_version = get_sync_version(lib_path)
 
     return HealthResponse(
         status=status,

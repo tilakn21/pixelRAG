@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from pixel_rag_core.faces.cluster_faces import update_person_profile, compute_suggested_merges
 from pixel_rag_server.models.schemas import PersonResponse, SuggestedMerge, TagByPhotoResponse
 from pixel_rag_server.dependencies import get_db_path, LibraryContext
+from pixel_rag_server.services.db import get_conn
 
 router = APIRouter(tags=["identities"])
 
@@ -30,8 +31,7 @@ def _person_from_row(row: dict, db_path: str) -> PersonResponse:
             quality = "poor"
 
     # Get face count and representative face
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     try:
         face_count = conn.execute(
             "SELECT COUNT(*) FROM faces WHERE person_id = ?", (person_id,)
@@ -46,21 +46,10 @@ def _person_from_row(row: dict, db_path: str) -> PersonResponse:
         conn.close()
 
     # Get lib_hash from library manager
-    from pixel_rag_server.services.library_manager import get_path_hash
-    from pathlib import Path
-    import os
+    from pixel_rag_server.services.library_manager import get_path_hash, get_sync_version
     lib_path = row["folder_root"]
     lib_hash = get_path_hash(lib_path)
-    
-    sync_version = 0
-    try:
-        import hashlib
-        lib_hash_12 = hashlib.md5(lib_path.encode()).hexdigest()[:12]
-        face_cache_dir = Path.home() / ".pixelrag" / "thumbs" / lib_hash_12 / "faces"
-        if face_cache_dir.exists():
-            sync_version = int(face_cache_dir.stat().st_mtime)
-    except Exception:
-        pass
+    sync_version = get_sync_version(lib_path)
 
     cover_url = f"/api/media/face/{cover_face[0]}?h={lib_hash}_{sync_version}" if cover_face else None
 
@@ -86,8 +75,7 @@ def list_identities(
     import os
     MIN_CLUSTER_SIZE = int(os.environ.get("PIXELRAG_MIN_CLUSTER_SIZE", "2"))
 
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
 
     query = f"""
@@ -120,8 +108,7 @@ def get_identities_graph(request: Request, lib_ctx: LibraryContext = Depends(get
     import os
     MIN_CLUSTER_SIZE = int(os.environ.get("PIXELRAG_MIN_CLUSTER_SIZE", "2"))
 
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
 
     # Nodes: All people in this library
@@ -135,20 +122,11 @@ def get_identities_graph(request: Request, lib_ctx: LibraryContext = Depends(get
     """
     nodes_rows = conn.execute(nodes_query, (lib_ctx.library_path,)).fetchall()
     
+    from pixel_rag_server.services.library_manager import get_sync_version
+
     nodes = []
-    lib_hash = hashlib.md5(lib_ctx.library_path.encode()).hexdigest()[:8]
-    
-    sync_version = 0
-    import os
-    from pathlib import Path
-    try:
-        import hashlib
-        lib_hash_12 = hashlib.md5(lib_ctx.library_path.encode()).hexdigest()[:12]
-        face_cache_dir = Path.home() / ".pixelrag" / "thumbs" / lib_hash_12 / "faces"
-        if face_cache_dir.exists():
-            sync_version = int(face_cache_dir.stat().st_mtime)
-    except Exception:
-        pass
+    lib_hash = lib_ctx.lib_hash
+    sync_version = get_sync_version(lib_ctx.library_path)
     
     valid_person_ids = set()
     for r in nodes_rows:
@@ -163,37 +141,82 @@ def get_identities_graph(request: Request, lib_ctx: LibraryContext = Depends(get
                 "confirmed": bool(r["confirmed"])
             })
 
-    # Edges: Co-occurrences
+    # ── Time dimension ───────────────────────────────────────────────────────
+    # Per-year appearance counts per person, and per-year co-occurrence counts
+    # per pair. This is what lets the graph be scrubbed through time instead of
+    # showing one flat all-time snapshot. Years outside a plausible photo range
+    # are excluded — a handful of filenames parse into years like 8805.
+    year_rows = conn.execute("""
+        SELECT f.person_id, substr(p.created_at, 1, 4) AS yr, COUNT(DISTINCT p.id)
+        FROM faces f JOIN photos p ON p.id = f.photo_id
+        WHERE f.person_id IS NOT NULL AND p.created_at IS NOT NULL
+          AND substr(p.created_at,1,4) BETWEEN '1990' AND '2030'
+        GROUP BY f.person_id, yr
+    """).fetchall()
+    node_years: dict = {}
+    for pid, yr, n in year_rows:
+        node_years.setdefault(pid, {})[yr] = n
+    for nd in nodes:
+        nd["years"] = node_years.get(int(nd["id"]), {})
+
+    # Edges: Co-occurrences, with the years they happened in
     edges_query = """
-        SELECT f1.person_id as source, f2.person_id as target, COUNT(DISTINCT f1.photo_id) as weight
+        SELECT f1.person_id AS source, f2.person_id AS target,
+               substr(p.created_at, 1, 4) AS yr,
+               COUNT(DISTINCT f1.photo_id) AS weight
         FROM faces f1
         JOIN faces f2 ON f1.photo_id = f2.photo_id
+        JOIN photos p ON p.id = f1.photo_id
         WHERE f1.person_id < f2.person_id
-          AND f1.person_id IS NOT NULL 
+          AND f1.person_id IS NOT NULL
           AND f2.person_id IS NOT NULL
-        GROUP BY source, target
+        GROUP BY source, target, yr
     """
-    edges_rows = conn.execute(edges_query).fetchall()
-    
-    links = []
-    for r in edges_rows:
-        if r["source"] in valid_person_ids and r["target"] in valid_person_ids:
-            links.append({
-                "source": str(r["source"]),
-                "target": str(r["target"]),
-                "weight": r["weight"]
-            })
+    agg: dict = {}
+    for r in conn.execute(edges_query):
+        s, t, yr, w = r["source"], r["target"], r["yr"], r["weight"]
+        if s not in valid_person_ids or t not in valid_person_ids:
+            continue
+        e = agg.setdefault((s, t), {"weight": 0, "years": {}})
+        e["weight"] += w
+        if yr and "1990" <= yr <= "2030":
+            e["years"][yr] = e["years"].get(yr, 0) + w
 
+    links = [
+        {"source": str(s), "target": str(t), "weight": v["weight"], "years": v["years"]}
+        for (s, t), v in agg.items()
+    ]
+
+    all_years = sorted({y for nd in nodes for y in nd["years"]})
     conn.close()
-    return {"nodes": nodes, "links": links}
+    return {"nodes": nodes, "links": links,
+            "years": all_years,
+            "year_min": all_years[0] if all_years else None,
+            "year_max": all_years[-1] if all_years else None}
+
+
+@router.get("/identities/suggested-merges", response_model=list[SuggestedMerge])
+async def get_suggested_merges(request: Request, lib_ctx: LibraryContext = Depends(get_db_path)):
+    """
+    Read-only endpoint to compute and fetch mathematically similar identities
+    that might correspond to the same person.
+
+    NOTE: must be registered BEFORE the parameterized /identities/{person_id}
+    route — otherwise FastAPI matches "suggested-merges" as person_id and 422s.
+    Runs in an executor to avoid blocking the ASGI event loop during the
+    O(n^2) similarity scan.
+    """
+    db_path = lib_ctx.db_path
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, compute_suggested_merges, db_path, lib_ctx.library_path)
 
 
 @router.get("/identities/{person_id}", response_model=PersonResponse)
 def get_person_details(request: Request, person_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Fetch details for a single person cluster."""
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
 
     row = conn.execute("SELECT * FROM people WHERE id = ? AND folder_root = ?", (person_id, lib_ctx.library_path)).fetchone()
@@ -213,8 +236,7 @@ class RenameBody(BaseModel):
 def rename_person(request: Request, person_id: int, body: RenameBody, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Update a person's name and mark as confirmed."""
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
 
     # Verify person exists in this library
@@ -255,8 +277,7 @@ class MergeBody(BaseModel):
 def merge_persons(request: Request, person_id: int, body: MergeBody, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Merge another cluster into this person."""
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
 
     target = conn.execute("SELECT * FROM people WHERE id = ? AND folder_root = ?", (person_id, lib_ctx.library_path)).fetchone()
@@ -325,8 +346,7 @@ class BatchMergeBody(BaseModel):
 def batch_merge_persons(request: Request, person_id: int, body: BatchMergeBody, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Merge multiple clusters into this person."""
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
 
     target = conn.execute("SELECT * FROM people WHERE id = ? AND folder_root = ?", (person_id, lib_ctx.library_path)).fetchone()
@@ -409,8 +429,7 @@ def split_cluster(request: Request, person_id: int, body: SplitBody, lib_ctx: Li
     if not body.face_ids:
         raise HTTPException(status_code=400, detail={"error": "No faces to split"})
 
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
 
     # Create new person in this library's folder_root
@@ -445,26 +464,11 @@ def split_cluster(request: Request, person_id: int, body: SplitBody, lib_ctx: Li
     }
 
 
-@router.get("/identities/suggested-merges", response_model=list[SuggestedMerge])
-async def get_suggested_merges(request: Request, lib_ctx: LibraryContext = Depends(get_db_path)):
-    """
-    Read-only endpoint to compute and fetch mathematically similar identities 
-    that might correspond to the same person.
-    Runs asynchronously in an executor to prevent completely blocking the ASGI event loop
-    during O(n^2) similarity scans.
-    """
-    db_path = lib_ctx.db_path
-    import asyncio
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, compute_suggested_merges, db_path, lib_ctx.library_path)
-
-
 @router.get("/identities/{person_id}/similar", response_model=list[PersonResponse])
 def get_similar_clusters(request: Request, person_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Get top 5 similar unconfirmed clusters by centroid cosine similarity."""
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
 
     target = conn.execute(
@@ -506,8 +510,7 @@ def get_similar_clusters(request: Request, person_id: int, lib_ctx: LibraryConte
 def get_person_faces(request: Request, person_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Get all face IDs for a person (used by the split UI)."""
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     rows = conn.execute(
         "SELECT id FROM faces WHERE person_id = ?", (person_id,)
     ).fetchall()
@@ -523,8 +526,7 @@ def delete_person(request: Request, person_id: int, lib_ctx: LibraryContext = De
     Removes the person record and unlinks all associated faces (sets them back to NULL).
     """
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     
     # Check if exists in this library
     row = conn.execute("SELECT id FROM people WHERE id = ? AND folder_root = ?", (person_id, lib_ctx.library_path)).fetchone()
@@ -560,8 +562,7 @@ def batch_delete_persons(request: Request, body: BatchDeleteBody, lib_ctx: Libra
     Removes the person records and unlinks all associated faces.
     """
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     
     if not body.person_ids:
         conn.close()
@@ -649,8 +650,7 @@ def tag_by_photo(
     emb_norm = emb / (np.linalg.norm(emb) + 1e-10)
 
     # 2. Compare against ALL person centroids in this library
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
 
     all_people = conn.execute(
@@ -664,14 +664,38 @@ def tag_by_photo(
         raise HTTPException(status_code=400, detail={"error": "No clusters found in this library. Run a sync first."})
 
     # 3. Find all matching clusters (similarity > 0.65)
-    TAG_SIMILARITY_THRESHOLD = 0.65
-    matching_ids = []
+    # A fixed bar is only safe while the impostor distribution stays below it,
+    # and impostor_max grows with identity count (~0.128*ln(n)+0.086 measured on
+    # this library), projecting the 0.65 bar breached near ~82 identities. The
+    # margin check below rejects the reference photo outright when its top two
+    # identity matches are effectively tied, since absorbing the wrong cluster
+    # here merges two real people under one name.
+    import os as _os
+    TAG_SIMILARITY_THRESHOLD = float(_os.environ.get("PIXELRAG_TAG_THRESHOLD", "0.65"))
+    TAG_MARGIN = float(_os.environ.get("PIXELRAG_TAG_MARGIN", "0.05"))
+
+    scored = []
     for row in all_people:
         centroid = np.frombuffer(row["centroid_embedding"], dtype=np.float32)
         c_norm = centroid / (np.linalg.norm(centroid) + 1e-10)
-        sim = float(np.dot(emb_norm, c_norm))
-        if sim >= TAG_SIMILARITY_THRESHOLD:
-            matching_ids.append((row["id"], sim, bool(row["confirmed"])))
+        scored.append((row["id"], float(np.dot(emb_norm, c_norm)), bool(row["confirmed"])))
+
+    scored.sort(key=lambda x: -x[1])
+    if len(scored) > 1 and scored[0][1] >= TAG_SIMILARITY_THRESHOLD:
+        gap = scored[0][1] - scored[1][1]
+        if gap < TAG_MARGIN and scored[1][1] >= TAG_SIMILARITY_THRESHOLD:
+            conn.close()
+            raise HTTPException(
+                status_code=409,
+                detail={"error": (
+                    f"This photo matches two different identities almost equally "
+                    f"({scored[0][1]:.2f} vs {scored[1][1]:.2f}). Naming from it "
+                    f"could merge two different people. Try a clearer, "
+                    f"front-facing photo of just this person."
+                )},
+            )
+
+    matching_ids = [(pid, s, conf) for pid, s, conf in scored if s >= TAG_SIMILARITY_THRESHOLD]
 
     if not matching_ids:
         conn.close()

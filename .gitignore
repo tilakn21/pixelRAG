@@ -60,3 +60,24 @@ Photos/
 scratch/
 .pixelrag_config.json
 *.webp
+# --- Local notes & agent instruction files (not part of the public repo) ---
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+BACKEND_MASTER.md
+SOLVED_PROBLEMS.md
+CONTEXT.md
+MODELS.md
+RESEARCH.md
+medium_article.md
+*.resolved
+
+# --- Media & marketing artifacts (root only) ---
+/*.mp4
+/*.mov
+/pixelrag_architecture_diagram.png
+
+# --- Local dev scripts ---
+test_insightface.py
+wipe_and_resync.py
+wipe_faces_fix.py

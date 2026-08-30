@@ -55,6 +55,30 @@ _INFERENCE_TIMEOUT = 60    # Per-image timeout in seconds (parent-side only)
 # CPU provider — CoreML deadlocks when multiple workers compile models simultaneously
 _PROVIDERS = ['CPUExecutionProvider']
 
+# ── Auto-tag gate ────────────────────────────────────────────────────────────
+# Auto-tag writes person_id at INSERT time, before clustering runs. Confirmed
+# faces are then excluded from clustering input, the scrubber only ejects below
+# 0.45, and confirmed centroids are frozen — so a wrong assignment here is never
+# revisited by any later stage. It is the least recoverable of the four
+# assignment rules, which is why it gets a margin test on top of the bar.
+#
+# Measured on the real library (scratch/measure_impostor_margins.py, N=7):
+#   genuine vs own centroid : min 0.436, p5 0.619, median 0.806
+#   impostor (best OTHER)   : median 0.177, p99 0.310, MAX 0.335
+#   top-1 identification errors: 0/599
+# So at N=7 every bar has huge headroom. But impostor_max grows with identity
+# count, fitted as ~0.128*ln(n)+0.086, which projects the 0.70 bar being
+# breached near ~122 identities — inside the 100-200 range this library expects.
+#
+# DELTA could NOT be derived from genuine/impostor separation: with zero
+# impostor top-1 wins there is no impostor margin distribution to separate
+# from. It is instead chosen to be free now and still workable later —
+# 0.05 is far below the N=7 correct-margin p1 of 0.369, and below the ~0.079
+# genuine margin projected at N=150. Re-measure once the 28k library has
+# confirmed identities; see CONTEXT.md §15.
+AUTOTAG_THRESHOLD = float(os.environ.get("PIXELRAG_AUTOTAG_THRESHOLD", "0.70"))
+AUTOTAG_MARGIN = float(os.environ.get("PIXELRAG_AUTOTAG_MARGIN", "0.05"))
+
 FaceResult = List[Tuple[float, float, float, float, float, float, float, float, np.ndarray]]
 
 # ── Worker process globals (initialized once per worker via _worker_init) ────
@@ -128,14 +152,41 @@ def _check_phash_duplicate(conn: sqlite3.Connection, phash_str: str, current_pho
     return row is not None
 
 
-def _log_failed_image(db_path: str, path: str, stage: str, error: str):
-    """Log a processing failure to failed_images table. Never raises."""
+def _log_failed_image(db_path: str, path: str, stage: str, error: str, infra: bool = False):
+    """
+    Log a processing failure to failed_images. Never raises.
+
+    `infra=True` marks a failure of OUR machinery rather than of the image:
+    a broken process pool, or the parent-side 90 s watchdog firing. Those are
+    recorded for visibility but do NOT increment retry_count and can never set
+    permanent=1.
+
+    Why the distinction matters: retry_count >= 3 sets permanent=1, and
+    permanently-failed paths are skipped on every future run. Charging a
+    perfectly good photo for a memory wobble therefore drops it from the face
+    index forever. That risk is not hypothetical on this run — we are on Python
+    3.10, where ProcessPoolExecutor's max_tasks_per_child is inert, so worker
+    RSS only grows across 28k images and pool restarts are expected.
+    """
     try:
         conn = sqlite3.connect(db_path, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
-        # Insert new failure record, incrementing retry_count from previous attempts
+
+        if infra:
+            # Visibility only: fixed retry_count = -1 sentinel, never permanent.
+            conn.execute(
+                "INSERT INTO failed_images (path, stage, error, failed_at, retry_count, permanent) "
+                "VALUES (?, ?, ?, datetime('now'), -1, 0)",
+                (path, f"{stage}_INFRA", str(error)[:500]),
+            )
+            conn.commit()
+            conn.close()
+            return
+
+        # Per-image failure: count it against the image.
         prev = conn.execute(
-            "SELECT retry_count FROM failed_images WHERE path = ? AND stage = ? ORDER BY id DESC LIMIT 1",
+            "SELECT retry_count FROM failed_images WHERE path = ? AND stage = ? "
+            "AND retry_count >= 0 ORDER BY id DESC LIMIT 1",
             (path, stage)
         ).fetchone()
         retry_count = (prev[0] + 1) if prev else 0
@@ -144,10 +195,10 @@ def _log_failed_image(db_path: str, path: str, stage: str, error: str):
             "INSERT INTO failed_images (path, stage, error, failed_at, retry_count) VALUES (?, ?, ?, datetime('now'), ?)",
             (path, stage, str(error)[:500], retry_count)
         )
-        # Mark permanent after 3 failures
+        # Mark permanent after 3 genuine per-image failures
         if retry_count >= 3:
             conn.execute(
-                "UPDATE failed_images SET permanent = 1 WHERE path = ? AND stage = ?",
+                "UPDATE failed_images SET permanent = 1 WHERE path = ? AND stage = ? AND retry_count >= 0",
                 (path, stage)
             )
         conn.commit()
@@ -408,9 +459,12 @@ def index_faces_for_photos(
 
                         if isinstance(raw, str):
                             if raw == "TIMEOUT":
+                                # Worker-side timeout is also a machinery signal,
+                                # not evidence the image itself is unprocessable.
                                 print(f"[PixelRAG] ⚠️  TIMEOUT: {Path(path).name} — skipped")
                                 skipped += 1
-                                _log_failed_image(db_path_str, path, 'FACES', 'Inference timeout')
+                                _log_failed_image(db_path_str, path, 'FACES',
+                                                  'Inference timeout', infra=True)
                             else:
                                 error_detail = raw.replace("ERROR:", "", 1)
                                 print(f"[PixelRAG] ⚠️  {Path(path).name}: {raw}")
@@ -423,8 +477,14 @@ def index_faces_for_photos(
                                 face_list.append((x1, y1, x2, y2, det_score, lap_var, roll, face_size_ratio, emb))
                             results[photo_id] = face_list
 
-                    except process.BrokenProcessPool:
+                    except process.BrokenProcessPool as e:
+                        # INFRASTRUCTURE failure: the pool died, not the image.
+                        # Do not charge this photo — it is left out of `results`
+                        # so the outer while-loop retries it with a fresh pool.
                         pool_broken = True
+                        print(f"[PixelRAG] ⚠️  Broken process pool while on "
+                              f"{Path(path).name} — will retry with a fresh pool")
+                        _log_failed_image(db_path_str, path, 'FACES', str(e), infra=True)
                         break
                     except Exception as e:
                         completed += 1
@@ -454,13 +514,19 @@ def index_faces_for_photos(
                         photo_id, path = future_to_photo[f]
                         elapsed = now - future_submit_time[f]
                         print(f"[PixelRAG] ⚠️  HUNG ({elapsed:.0f}s): {Path(path).name} — killing pool, skipping photo")
-                        
-                        # Mark this specifically hung photo as permanently skipped
+
+                        # The parent-side watchdog cannot distinguish "this image
+                        # wedged the decoder" from "the worker was starved/swapping".
+                        # Logged as INFRA so a slow moment never accumulates toward
+                        # permanent=1. The photo is still marked done for THIS run
+                        # (results[photo_id] = []) so the pass can finish, but its
+                        # has_faces stays NULL, so the next sync retries it.
                         results[photo_id] = []
                         skipped += 1
                         completed += 1
-                        _log_failed_image(db_path_str, path, 'FACES', f'Hung worker ({elapsed:.0f}s)')
-                        
+                        _log_failed_image(db_path_str, path, 'FACES',
+                                          f'Hung worker ({elapsed:.0f}s)', infra=True)
+
                         if progress_callback:
                             progress_callback(completed, total, f"Skipped hung: {Path(path).name}")
                     
@@ -522,6 +588,7 @@ def index_faces_for_photos(
             gallery_embeddings = np.array([])
 
         total_faces = 0
+        autotag_margin_rejects = 0
 
         for i, (photo_id, path) in enumerate(_original_photos_to_process):
             if progress_callback and (i + 1) % 10 == 0:
@@ -534,23 +601,42 @@ def index_faces_for_photos(
                 conn.commit()  # Persist the 0-face result
                 continue
 
-            # ── Face area coverage calculation for scene override (Change G) ──
-            # Only force scene_category='people' when faces cover >60% of image area.
-            # Otherwise, leave scene_category=NULL so CLIP can classify it.
-            total_face_area = 0.0
-
+            # NOTE: this stage no longer writes scene_category. Scene routing is
+            # owned entirely by scene_classifier.py, which reads the faces table
+            # directly (any detected face => 'people'). The old ">60% face area"
+            # override only fired on close-ups, so group and full-body shots fell
+            # through to CLIP and were misfiled — 340 of 476 face-bearing photos
+            # on the real library. Keeping the write here would race that logic.
             for bbox_x1, bbox_y1, bbox_x2, bbox_y2, det_score, lap_var, roll, face_size_ratio, emb in faces:
-                face_w = bbox_x2 - bbox_x1
-                face_h = bbox_y2 - bbox_y1
-                total_face_area += face_size_ratio  # Already expressed as fraction of image area
 
                 assigned_person_id = None
                 if len(gallery_embeddings) > 0:
                     emb_norm = emb / (np.linalg.norm(emb) + 1e-10)
                     sims = gallery_embeddings @ emb_norm
-                    max_sim_idx = np.argmax(sims)
-                    if sims[max_sim_idx] > 0.70:
-                        assigned_person_id = int(gallery_person_ids[max_sim_idx])
+
+                    # Reduce per-PERSON before ranking. The gallery holds several
+                    # representative faces per person, so a naive top-2 would
+                    # usually return the same person twice and the margin would
+                    # be meaningless.
+                    best_by_person: dict[int, float] = {}
+                    for pid_i, s in zip(gallery_person_ids, sims):
+                        pid_i = int(pid_i)
+                        s = float(s)
+                        if s > best_by_person.get(pid_i, -1.0):
+                            best_by_person[pid_i] = s
+
+                    ranked = sorted(best_by_person.items(), key=lambda kv: -kv[1])
+                    best_pid, best_sim = ranked[0]
+                    second_sim = ranked[1][1] if len(ranked) > 1 else -1.0
+
+                    # Assign only when the winner is both confident AND clearly
+                    # ahead of the runner-up. A near-tie means the embedding sits
+                    # between two identities; leaving it to clustering is
+                    # recoverable, writing the wrong person_id here is not.
+                    if best_sim > AUTOTAG_THRESHOLD and (best_sim - second_sim) >= AUTOTAG_MARGIN:
+                        assigned_person_id = best_pid
+                    elif best_sim > AUTOTAG_THRESHOLD:
+                        autotag_margin_rejects += 1
 
                 conn.execute(
                     "INSERT INTO faces (photo_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, person_id, sharpness, roll_angle, det_score, face_size_ratio) "
@@ -566,24 +652,18 @@ def index_faces_for_photos(
                 )
                 total_faces += 1
 
-            # Face coverage > 60% → force 'people' tag; otherwise let CLIP classify
-            if total_face_area > 0.60:
-                conn.execute(
-                    "UPDATE photos SET has_faces = 1, scene_category = 'people', scene_confidence = 1.0 WHERE id = ?",
-                    (photo_id,),
-                )
-            else:
-                conn.execute(
-                    "UPDATE photos SET has_faces = 1 WHERE id = ?",
-                    (photo_id,),
-                )
-            conn.commit()  # Persist the 1-face and tagging results
+            conn.execute("UPDATE photos SET has_faces = 1 WHERE id = ?", (photo_id,))
+            conn.commit()  # Persist the face results
         
         # Final vacuum / optimize ? No, just stay responsive
     finally:
         conn.close()
 
     print(f"[PixelRAG] Done. Total faces indexed: {total_faces}")
+    if autotag_margin_rejects:
+        print(f"[PixelRAG] Auto-tag margin rejected {autotag_margin_rejects} "
+              f"near-tie assignments (>= {AUTOTAG_THRESHOLD} but margin < "
+              f"{AUTOTAG_MARGIN}) — left for clustering to resolve.")
     return total_faces
 
 

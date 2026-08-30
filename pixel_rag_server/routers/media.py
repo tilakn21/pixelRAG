@@ -1,6 +1,7 @@
 # pixel_rag_server/routers/media.py
 """Media router — serves photos, thumbnails, and face crops with caching."""
 
+import os
 import sqlite3
 import hashlib
 from io import BytesIO
@@ -11,6 +12,7 @@ from fastapi.responses import Response
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 from pixel_rag_server.dependencies import get_db_path, LibraryContext
+from pixel_rag_server.services.db import get_conn
 
 register_heif_opener()
 
@@ -23,8 +25,7 @@ FACE_PADDING = 0.20  # 20% padding around bounding box
 
 def _get_photo_path(db_path: str, photo_id: int) -> str:
     """Look up a photo's file path by its ID."""
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     row = conn.execute("SELECT path FROM photos WHERE id = ?", (photo_id,)).fetchone()
     conn.close()
     if not row:
@@ -49,14 +50,25 @@ def _ensure_thumb_dir(lib_ctx: LibraryContext, subdir: str) -> Path:
     # Global config dir: ~/.pixelrag/
     base_cache = Path.home() / ".pixelrag" / "thumbs"
     lib_hash = hashlib.md5(lib_ctx.library_path.encode()).hexdigest()[:12]
-    
+
     thumb_dir = base_cache / lib_hash / subdir
     thumb_dir.mkdir(parents=True, exist_ok=True)
     return thumb_dir
 
 
+# NOTE: these handlers are deliberately `def`, NOT `async def`.
+#
+# They do blocking work — opening a 4000x3000 JPEG from disk, PIL decode,
+# LANCZOS resize, WebP encode. An `async def` handler runs directly ON the
+# event loop, so each of those decodes froze the entire server. With a cold
+# thumbnail cache the browser requests hundreds at once, which serialised
+# everything: /api/health measured >30 s and /api/identities never returned,
+# surfacing in the browser as ECONNRESET / socket hang up.
+#
+# Declaring them `def` makes FastAPI run them in the anyio worker threadpool,
+# so image work happens off the event loop and light endpoints stay responsive.
 @router.get("/media/photo/{photo_id}")
-async def serve_photo(request: Request, photo_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
+def serve_photo(request: Request, photo_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Serve full-resolution photo by ID."""
     db_path = lib_ctx.db_path
     photo_path = _get_photo_path(db_path, photo_id)
@@ -78,7 +90,7 @@ async def serve_photo(request: Request, photo_id: int, lib_ctx: LibraryContext =
 
 
 @router.get("/media/thumb/{photo_id}")
-async def serve_thumbnail(
+def serve_thumbnail(
     request: Request,
     photo_id: int,
     size: int = Query(400),
@@ -111,18 +123,27 @@ async def serve_thumbnail(
     img = _open_and_orient(photo_path)
     img.thumbnail((size, size), Image.LANCZOS)
 
-    # Save to cache
-    img.save(str(cache_path), format="WEBP", quality=82)
+    # Encode once, persist atomically (tmp + rename) so a concurrent request
+    # can never read a half-written cache file ("corrupted thumbnail" bug).
+    buf = BytesIO()
+    img.save(buf, format="WEBP", quality=82)
+    data = buf.getvalue()
+    try:
+        tmp_path = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
+        tmp_path.write_bytes(data)
+        os.replace(tmp_path, cache_path)
+    except Exception:
+        pass  # Serving must never fail because the cache write did
 
     return Response(
-        content=cache_path.read_bytes(),
+        content=data,
         media_type="image/webp",
         headers={"Cache-Control": "public, max-age=604800"},
     )
 
 
 @router.get("/media/face/{face_id}")
-async def serve_face_crop(request: Request, face_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
+def serve_face_crop(request: Request, face_id: int, lib_ctx: LibraryContext = Depends(get_db_path)):
     """Serve a cropped face image from a source photo."""
     db_path = lib_ctx.db_path
     # Check face crop cache (scoped to library)
@@ -137,8 +158,7 @@ async def serve_face_crop(request: Request, face_id: int, lib_ctx: LibraryContex
         )
 
     # Look up face and its bounding box
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=10)
     row = conn.execute(
         """
         SELECT f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2, p.path
@@ -175,11 +195,19 @@ async def serve_face_crop(request: Request, face_id: int, lib_ctx: LibraryContex
     face_img = img.crop((crop_x1, crop_y1, crop_x2, crop_y2))
     face_img = face_img.resize((FACE_CROP_SIZE, FACE_CROP_SIZE), Image.LANCZOS)
 
-    # Save to cache
-    face_img.save(str(cache_path), format="WEBP", quality=85)
+    # Encode once, persist atomically (tmp + rename) — same as thumbnails.
+    buf = BytesIO()
+    face_img.save(buf, format="WEBP", quality=85)
+    data = buf.getvalue()
+    try:
+        tmp_path = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
+        tmp_path.write_bytes(data)
+        os.replace(tmp_path, cache_path)
+    except Exception:
+        pass
 
     return Response(
-        content=cache_path.read_bytes(),
+        content=data,
         media_type="image/webp",
         headers={"Cache-Control": "public, max-age=604800"},
     )

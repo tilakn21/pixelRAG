@@ -1,12 +1,9 @@
 // pixel_rag_web/src/lib/types.ts
 
-export type SceneCategory =
-  | "landscape"
-  | "document"
-  | "food"
-  | "architecture"
-  | "people"
-  | "other";
+// Scene categories live in lib/categories.ts (single source of truth, kept in
+// step with the Python classifier). Re-exported here so existing imports of
+// `SceneCategory` from "@/lib/types" keep working.
+export type { SceneCategory } from "./categories";
 
 export type PersonQuality = "good" | "fair" | "poor";
 

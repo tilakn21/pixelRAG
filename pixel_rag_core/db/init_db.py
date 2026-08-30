@@ -104,6 +104,9 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_photos_has_faces ON photos(has_faces)",
     "CREATE INDEX IF NOT EXISTS idx_failed_images_path ON failed_images(path)",
     "CREATE INDEX IF NOT EXISTS idx_failed_images_permanent ON failed_images(permanent)",
+    "CREATE INDEX IF NOT EXISTS idx_photos_scene_model ON photos(scene_model)",
+    "CREATE INDEX IF NOT EXISTS idx_photos_scene_secondary ON photos(scene_secondary)",
+    "CREATE INDEX IF NOT EXISTS idx_photos_source ON photos(source)",
 ]
 
 
@@ -129,6 +132,14 @@ def run_migrations(conn: sqlite3.Connection):
     _safe_add_column(conn, "photos", "scene_tags", "TEXT")
     _safe_add_column(conn, "photos", "scene_low_confidence", "INTEGER", default=0)
     _safe_add_column(conn, "photos", "file_hash", "TEXT")
+    # Scene v2: routed classification (face-first + metadata rules + CLIP)
+    _safe_add_column(conn, "photos", "scene_secondary", "TEXT")   # visual scene even when primary='people'
+    _safe_add_column(conn, "photos", "scene_source", "TEXT")      # 'faces' | 'metadata' | 'clip' | 'unsorted'
+    _safe_add_column(conn, "photos", "scene_model", "TEXT")       # classifier version tag, for reclassification
+    _safe_add_column(conn, "photos", "width", "INTEGER")
+    _safe_add_column(conn, "photos", "height", "INTEGER")
+    # Provenance facet (whatsapp / camera / scan / download / ...) — NOT a content label
+    _safe_add_column(conn, "photos", "source", "TEXT")
 
     # ── faces table additions ─────────────────────────────────────────
     _safe_add_column(conn, "faces", "is_representative", "INTEGER", default=0)
@@ -206,17 +217,38 @@ def run_migrations(conn: sqlite3.Connection):
     cur.execute("PRAGMA user_version")
     version = cur.fetchone()[0]
     
-    # ── State Repair: has_faces ───────────────────────────────────────
-    # Photos with has_faces = 0 and no linked face records are in an
-    # inconsistent state (likely from a legacy DB default). Reset them
-    # to NULL so the face indexer will pick them up.
-    # This is safe to run every time.
+    # ── State Repair: dangling cluster_id ─────────────────────────────
+    # `DELETE FROM clusters` (done by scrub_cross_library_contamination) leaves
+    # faces.cluster_id pointing at rows that no longer exist. Because new
+    # cluster ids restart at MAX(id)+1, those stale values get RECYCLED and a
+    # later `WHERE cluster_id = ?` sweeps up unrelated faces — measured moving
+    # 28 confirmed faces to the wrong person. Heal on every startup.
     conn.execute("""
-        UPDATE photos 
-        SET has_faces = NULL 
-        WHERE has_faces = 0 
-          AND id NOT IN (SELECT DISTINCT photo_id FROM faces)
+        UPDATE faces SET cluster_id = NULL
+        WHERE cluster_id IS NOT NULL
+          AND cluster_id NOT IN (SELECT id FROM clusters)
     """)
+
+    # ── REMOVED: "State Repair: has_faces" ────────────────────────────
+    # This used to run on EVERY init_db():
+    #     UPDATE photos SET has_faces = NULL
+    #      WHERE has_faces = 0 AND id NOT IN (SELECT DISTINCT photo_id FROM faces)
+    #
+    # Its premise — "has_faces = 0 with no face rows is inconsistent" — is
+    # simply false now. Two legitimate terminal states produce exactly that
+    # shape:
+    #   * the pHash dedup pass marks near-duplicates has_faces = 0 without
+    #     ever running detection on them (11,547 photos on the real library);
+    #   * a photo that WAS processed and genuinely contains no face.
+    #
+    # Measured damage on the 28k library: it reset **19,709 photos** from 0 to
+    # NULL on a single server start, discarding 138 minutes of face-indexing
+    # decisions and queuing every deduplicated photo for reprocessing. It was
+    # also expensive — a NOT IN scan over 22,476 faces holding a write lock on
+    # external storage, re-run on every init_db() (i.e. per new `?h=` library).
+    #
+    # If a genuinely legacy DB ever needs this repair it must be a one-time,
+    # user_version-gated migration, never an unconditional every-boot UPDATE.
 
     # Enable WAL mode for concurrent access
     conn.execute("PRAGMA journal_mode=WAL")

@@ -1,34 +1,60 @@
 # pixel_rag_server/routers/photos.py
 """Photos router — paginated photo listing with filters."""
 
+import json
 import sqlite3
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request, Depends
 from pixel_rag_server.models.schemas import PaginatedPhotos, PhotoResponse
 from pixel_rag_server.dependencies import get_db_path, LibraryContext
+from pixel_rag_server.services.library_manager import get_sync_version
+from pixel_rag_server.services.db import get_conn
 
 router = APIRouter(tags=["photos"])
 
 
-def _get_people_for_photo(conn: sqlite3.Connection, photo_id: int) -> tuple[list[int], list[str]]:
-    """Get all person IDs and names linked to a photo via faces."""
-    rows = conn.execute(
-        """
-        SELECT DISTINCT p.id, p.name
-        FROM faces f
-        JOIN people p ON f.person_id = p.id
-        WHERE f.photo_id = ? AND f.person_id IS NOT NULL
-        """,
-        (photo_id,),
-    ).fetchall()
-    ids = [r[0] for r in rows]
-    names = [r[1] for r in rows]
-    return ids, names
+def parse_scene_tags(raw: Optional[str]) -> list[str]:
+    """
+    scene_tags is stored as JSON top-3 [{"category": ..., "score": ...}];
+    legacy rows may hold a plain CSV string. Return clean tag names either way.
+    """
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [d["category"] for d in data if isinstance(d, dict) and "category" in d]
+    except (ValueError, TypeError):
+        pass
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
+# `def`, not `async def` — blocking sqlite work belongs in the threadpool, not
+# on the event loop. See the note in routers/media.py.
+@router.get("/photos/categories")
+def category_counts(request: Request, lib_ctx: LibraryContext = Depends(get_db_path)):
+    """
+    Photo count per scene category, for the category pills.
+
+    One grouped query rather than a COUNT per pill. Lets the UI show sizes and
+    hide categories this library has none of, instead of rendering a dozen
+    empty buckets.
+    """
+    conn = get_conn(lib_ctx.db_path, timeout=10)
+    try:
+        rows = conn.execute(
+            "SELECT scene_category, COUNT(*) FROM photos "
+            "WHERE scene_category IS NOT NULL GROUP BY scene_category"
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+    finally:
+        conn.close()
+    return {"counts": {r[0]: r[1] for r in rows}, "total": total}
 
 
 @router.get("/photos", response_model=PaginatedPhotos)
-async def list_photos(
+def list_photos(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -41,8 +67,7 @@ async def list_photos(
 ):
     """Return paginated photos with optional filtering."""
     db_path = lib_ctx.db_path
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_conn(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
 
     # Build query
@@ -101,23 +126,44 @@ async def list_photos(
     """
     rows = conn.execute(data_sql, params + [page_size, offset]).fetchall()
 
+    # Batch-load linked people and matched faces for the whole page
+    # (previously one query per photo — N+1 on every page load).
+    page_photo_ids = [row["id"] for row in rows]
+    people_map: dict[int, list[tuple[int, str]]] = {pid: [] for pid in page_photo_ids}
+    matched_face_map: dict[int, int] = {}
+
+    if page_photo_ids:
+        ph = ",".join("?" * len(page_photo_ids))
+        people_rows = conn.execute(
+            f"""
+            SELECT DISTINCT f.photo_id, p.id, p.name
+            FROM faces f
+            JOIN people p ON f.person_id = p.id
+            WHERE f.photo_id IN ({ph})
+            """,
+            page_photo_ids,
+        ).fetchall()
+        for r in people_rows:
+            people_map[r[0]].append((r[1], r[2]))
+
+        # If filtering by person, find one face ID per photo for UI alignment
+        if person_id is not None:
+            face_rows = conn.execute(
+                f"SELECT photo_id, MIN(id) FROM faces WHERE person_id = ? "
+                f"AND photo_id IN ({ph}) GROUP BY photo_id",
+                [person_id, *page_photo_ids],
+            ).fetchall()
+            matched_face_map = {r[0]: r[1] for r in face_rows}
+
+    # Include sync generation in thumb URLs so browsers refetch after re-syncs
+    thumb_bust = f"{lib_ctx.lib_hash}_{get_sync_version(lib_ctx.library_path)}"
+
     items = []
     for row in rows:
         photo_id_val = row["id"]
         path = row["path"]
         filename = path.rsplit("/", 1)[-1] if "/" in path else path
-        
-        person_ids, person_names = _get_people_for_photo(conn, photo_id_val)
-
-        # Optimization: if filtering by person, find the specific face ID for the UI alignment
-        matched_face_id = None
-        if person_id is not None:
-            f_row = conn.execute(
-                "SELECT id FROM faces WHERE photo_id = ? AND person_id = ? LIMIT 1",
-                (photo_id_val, person_id)
-            ).fetchone()
-            if f_row:
-                matched_face_id = f_row[0]
+        linked = people_map.get(photo_id_val, [])
 
         items.append(
             PhotoResponse(
@@ -131,16 +177,16 @@ async def list_photos(
                 state=row["state"],
                 country=row["country"],
                 has_faces=bool(row["has_faces"]),
-                person_ids=person_ids,
-                person_names=person_names,
+                person_ids=[p[0] for p in linked],
+                person_names=[p[1] for p in linked],
                 camera_make=row["camera_make"],
                 camera_model=row["camera_model"],
                 latitude=row["latitude"],
                 longitude=row["longitude"],
                 description=row["description"],
-                scene_tags=[t.strip() for t in row["scene_tags"].split(",")] if row["scene_tags"] else [],
-                matched_face_id=matched_face_id,
-                thumbnail_url=f"/api/media/thumb/{photo_id_val}?size=400&h={lib_ctx.lib_hash}",
+                scene_tags=parse_scene_tags(row["scene_tags"]),
+                matched_face_id=matched_face_map.get(photo_id_val),
+                thumbnail_url=f"/api/media/thumb/{photo_id_val}?size=400&h={thumb_bust}",
                 lib_hash=lib_ctx.lib_hash
             )
         )

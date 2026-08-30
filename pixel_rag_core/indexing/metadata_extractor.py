@@ -17,6 +17,23 @@ def _fallback_fs_datetime(image_path: Path) -> Optional[str]:
     except Exception:
         return None
 
+# Filenames contain plenty of digit runs that are not dates — Snapchat ids,
+# content hashes, resolution strings. Measured on the real library: 8 photos got
+# years like 1236, 3453, 4324, 6075 and 8805 from strings such as
+# "Snapchat-1236102070.jpg". Anything outside this window is not a photo date.
+_MIN_PHOTO_YEAR = 1990
+_MAX_PHOTO_YEAR = datetime.now().year + 1
+
+
+def _plausible(year: int, month: int, day: int) -> Optional[str]:
+    if not (_MIN_PHOTO_YEAR <= year <= _MAX_PHOTO_YEAR):
+        return None
+    try:
+        return datetime(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
 def _parse_filename_datetime(filename: str) -> Optional[str]:
     """
     Common patterns:
@@ -27,21 +44,17 @@ def _parse_filename_datetime(filename: str) -> Optional[str]:
     # 1. YYYYMMDD (e.g. IMG20230314, IMG_20230314)
     y_m_d = re.search(r'(?:IMG|VID)?_?(\d{4})(\d{2})(\d{2})', filename, re.IGNORECASE)
     if y_m_d:
-        try:
-            dt = datetime(int(y_m_d.group(1)), int(y_m_d.group(2)), int(y_m_d.group(3)))
-            return dt.isoformat()
-        except ValueError:
-            pass
-            
+        got = _plausible(int(y_m_d.group(1)), int(y_m_d.group(2)), int(y_m_d.group(3)))
+        if got:
+            return got
+
     # 2. YYYY-MM-DD
     hyphenated = re.search(r'(\d{4})-(\d{2})-(\d{2})', filename)
     if hyphenated:
-        try:
-            dt = datetime(int(hyphenated.group(1)), int(hyphenated.group(2)), int(hyphenated.group(3)))
-            return dt.isoformat()
-        except ValueError:
-            pass
-            
+        got = _plausible(int(hyphenated.group(1)), int(hyphenated.group(2)), int(hyphenated.group(3)))
+        if got:
+            return got
+
     return None
 
 

@@ -10,16 +10,26 @@ interface PhotoCardProps {
   onClick: () => void;
   libHash?: string;
   matchedFaceId?: number | null;
+  selectable?: boolean;
+  selected?: boolean;
 }
 
-export default function PhotoCard({ photo, onClick, libHash, matchedFaceId }: PhotoCardProps) {
+export default function PhotoCard({
+  photo,
+  onClick,
+  libHash,
+  matchedFaceId,
+  selectable,
+  selected,
+}: PhotoCardProps) {
   return (
-    <button 
-      className="photo-card" 
-      onClick={onClick} 
+    <button
+      className="photo-card"
+      onClick={onClick}
       type="button"
+      aria-pressed={selectable ? !!selected : undefined}
       style={{
-        border: "var(--border-thick)",
+        border: selected ? "4px solid var(--electric-purple)" : "var(--border-thick)",
         borderRadius: "16px",
         overflow: "hidden",
         position: "relative",
@@ -28,9 +38,34 @@ export default function PhotoCard({ photo, onClick, libHash, matchedFaceId }: Ph
         boxShadow: "none",
         display: "inline-block",
         width: "100%",
-        marginBottom: "20px"
+        marginBottom: "20px",
+        opacity: selectable && !selected ? 0.72 : 1,
       }}
     >
+      {selectable && (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            top: 12,
+            left: 12,
+            zIndex: 12,
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            border: "2px solid #000",
+            background: selected ? "var(--electric-purple)" : "rgba(255,255,255,.92)",
+            display: "grid",
+            placeItems: "center",
+            color: "#fff",
+            fontFamily: "var(--font-pixel)",
+            fontSize: 15,
+            boxShadow: "2px 2px 0 rgba(0,0,0,.4)",
+          }}
+        >
+          {selected ? "✓" : ""}
+        </span>
+      )}
       <style jsx>{`
         .photo-card:hover {
           transform: translate(-4px, -4px);

@@ -1,7 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
 from fastapi import Request, HTTPException
-from pixel_rag_server.services.library_manager import get_known_libraries, get_path_hash
+from pixel_rag_server.services.library_manager import (
+    get_known_libraries,
+    get_library_db_path,
+    get_path_hash,
+)
 
 @dataclass
 class LibraryContext:
@@ -29,7 +33,7 @@ def get_db_path(request: Request) -> LibraryContext:
         known_libs = get_known_libraries()
         for lib_path in known_libs:
             if get_path_hash(lib_path) == lib_hash:
-                db_path = str(Path(lib_path) / ".pixelrag" / "db.sqlite")
+                db_path = get_library_db_path(lib_path)
                 
                 # Ensure the database is initialized before any router uses it (only once per process)
                 if db_path not in _initialized_dbs:

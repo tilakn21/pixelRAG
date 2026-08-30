@@ -143,11 +143,11 @@ async def start_sync(request: Request, lib_ctx: LibraryContext = Depends(get_db_
 
     # Reset state
     _sync_state = SyncStatus(
-        status="running", 
-        progress=0, 
-        step_index=1, 
-        total_steps=6, 
-        step_name="SCAN"
+        status="running",
+        progress=0,
+        step_index=1,
+        total_steps=7,
+        step_name="PRUNE"
     )
 
     # Start as a NON-daemon thread — managed by SHUTDOWN_EVENT + signal handlers

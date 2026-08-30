@@ -1,11 +1,6 @@
-const CATEGORY_LABELS: Record<string, string> = {
-  people: "People",
-  landscape: "Landscape",
-  food: "Food",
-  architecture: "Architecture",
-  document: "Document",
-  other: "Other",
-};
+// Category labels moved to lib/categories.ts so the classifier's 14 categories
+// and the UI can no longer drift apart. Re-exported for existing callers.
+export { formatSceneCategory } from "./categories";
 
 export function formatCompactNumber(value: number | null | undefined): string {
   return new Intl.NumberFormat("en", {
@@ -39,11 +34,6 @@ export function formatDateTime(value: string | null | undefined): string {
 export function formatLocation(parts: Array<string | null | undefined>): string {
   const value = parts.filter(Boolean).join(", ");
   return value || "No location data";
-}
-
-export function formatSceneCategory(category: string | null | undefined): string {
-  if (!category) return "Unclassified";
-  return CATEGORY_LABELS[category] ?? category;
 }
 
 export function formatLibraryLabel(path: string | null | undefined): string {

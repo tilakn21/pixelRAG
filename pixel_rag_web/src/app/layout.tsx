@@ -24,12 +24,12 @@ export const metadata: Metadata = {
   description: "A brutalist curation interface for structural photography.",
 };
 
-export const head = (
-  <>
-    <link rel="preload" href="/animations gifs/logo.mp4" as="video" type="video/mp4" />
-    <link rel="preload" href="/animations gifs/loading_fullscreen_animation.mp4" as="video" type="video/mp4" />
-  </>
-);
+// NOTE: `export const head` was removed — it is not an App Router API and was
+// silently doing nothing. The hidden <video preload="auto"> block below it was
+// doing something, though: eagerly downloading logo.mp4 (3.8 MB) and
+// loading_fullscreen_animation.mp4 (2.7 MB) on EVERY page load, 6.5 MB before
+// any photo rendered. The logo now loads naturally with the nav that shows it,
+// and the loading animation loads only when FullscreenLoader mounts.
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -45,11 +45,6 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${spaceGrotesk.variable} ${vt323.variable}`}>
       <body>
-        {/* Persistent Hidden Cache for Core Assets */}
-        <div style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0, pointerEvents: "none" }}>
-          <video preload="auto" muted><source src="/animations gifs/logo.mp4" type="video/mp4" /></video>
-          <video preload="auto" muted><source src="/animations gifs/loading_fullscreen_animation.mp4" type="video/mp4" /></video>
-        </div>
         <TopNav />
         <main className="main-stage">
           <div className="shell-container content-wrap">{children}</div>
