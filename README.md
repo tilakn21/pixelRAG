@@ -46,7 +46,7 @@ The only thing that ever touches the internet is your typed search query, sent t
 
 ## Getting started
 
-You need **Python 3.10+** and **Node 18+**.
+You need **Python 3.10–3.12** (3.12 recommended; 3.13+ is untested with InsightFace/torch) and **Node 18+**.
 
 ### 1. Clone
 
@@ -58,10 +58,18 @@ cd pixelRAG
 ### 2. Backend
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+# macOS / Linux
+python3.12 -m venv .venv && source .venv/bin/activate
+
+# Windows (PowerShell) — prefer the py launcher so you get 3.12, not a newer default
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
 
-cp pixel_rag_server/.env.example pixel_rag_server/.env
+cp pixel_rag_server/.env.example pixel_rag_server/.env   # macOS / Linux
+copy pixel_rag_server\.env.example pixel_rag_server\.env # Windows
+
 # open pixel_rag_server/.env and paste your free Groq API key
 
 python -m uvicorn pixel_rag_server.main:app --port 8000
@@ -83,6 +91,8 @@ npm run dev
 
 Open **http://localhost:3000**, pick your photo folder, and hit **Sync**. Indexing runs fully hands-off — a large library takes a few hours the first time, and new photos only need a quick resync.
 
+On Windows you can use **Browse** (native folder picker) or paste an absolute path such as `D:\Photos`.
+
 ## Project structure
 
 ```
@@ -100,6 +110,6 @@ pixelRAG/
 
 ## Good to know
 
-- Built and tested on **macOS (Apple Silicon)**. The pipeline itself is cross-platform; a few conveniences (like *Move to Trash*) are macOS-only.
+- Built and tested on **macOS (Apple Silicon)**. The indexing pipeline also runs on **Windows**; folder browse, Recycle Bin delete, and path labels are supported there too. *Reveal in Finder* remains macOS-only.
 - Works on external drives — point it at an SSD full of photos and it just indexes.
-- The index database lives in `~/.pixelrag/`, so your photo folder is never modified.
+- The index database lives in `~/.pixelrag/` (or `%USERPROFILE%\.pixelrag\` on Windows), so your photo folder is never modified.

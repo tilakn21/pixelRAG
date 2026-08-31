@@ -55,6 +55,7 @@ pnpm-debug.log*
 *.sqlite3
 
 /testphoto/
+/_test_photos/
 DCIM Camera/
 Photos/
 scratch/

@@ -3,6 +3,7 @@ import subprocess
 import shutil
 import hashlib
 import sqlite3
+import sys
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -10,24 +11,80 @@ from pydantic import BaseModel
 router = APIRouter(tags=["config"])
 
 
+def _browse_folder_native() -> str | None:
+    """Open a native OS folder picker. Returns None if the user cancels."""
+    if sys.platform == "darwin":
+        # AppleScript folder picker — native macOS dialog.
+        script = 'POSIX path of (choose folder with prompt "Select PixelRAG Library Folder")'
+        try:
+            proc = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return proc.stdout.strip() or None
+        except subprocess.CalledProcessError:
+            return None
+
+    if sys.platform == "win32":
+        # WinForms FolderBrowserDialog via PowerShell STA (works from FastAPI).
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+            "$d.Description = 'Select PixelRAG Library Folder'; "
+            "$d.ShowNewFolderButton = $true; "
+            "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) "
+            "{ Write-Output $d.SelectedPath }"
+        )
+        try:
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-STA", "-Command", ps],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+            path = (proc.stdout or "").strip()
+            return path or None
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"Could not open folder picker: {e}"},
+            ) from e
+
+    # Linux / other: tkinter file dialog (stdlib).
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        path = filedialog.askdirectory(title="Select PixelRAG Library Folder")
+        root.destroy()
+        return path or None
+    except Exception as e:
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "error": (
+                    "Native folder picker is unavailable on this platform. "
+                    "Paste an absolute folder path instead."
+                ),
+                "cause": str(e),
+            },
+        ) from e
+
+
 @router.post("/config/browse")
 async def browse_folder():
-    """Open a native macOS folder selection dialog and return the path."""
-    # This AppleScript opens a folder picker and returns the POSIX path.
-    # We use osascript to ensure it runs as a native macOS dialog.
-    script = 'POSIX path of (choose folder with prompt "Select PixelRAG Library Folder")'
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        path = proc.stdout.strip()
-        return {"path": path}
-    except subprocess.CalledProcessError:
-        # User likely cancelled the dialog
-        return {"path": None}
+    """Open a native OS folder selection dialog and return the path."""
+    path = _browse_folder_native()
+    return {"path": path}
 
 
 class LibrarySetupRequest(BaseModel):

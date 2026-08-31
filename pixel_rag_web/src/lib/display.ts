@@ -38,7 +38,8 @@ export function formatLocation(parts: Array<string | null | undefined>): string 
 
 export function formatLibraryLabel(path: string | null | undefined): string {
   if (!path) return "No folder connected";
-  const segments = path.split("/").filter(Boolean);
+  // Support both POSIX (/) and Windows (\) separators.
+  const segments = path.split(/[/\\]/).filter(Boolean);
   return segments.at(-1) ?? path;
 }
 

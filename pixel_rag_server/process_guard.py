@@ -24,6 +24,18 @@ import threading
 import time
 from pathlib import Path
 
+# Windows consoles default to a legacy code page (cp1252). Pipeline log lines
+# use Unicode (✓, ⚠️, …); printing them raises UnicodeEncodeError and aborts
+# face indexing mid-sync. Force UTF-8 for this process and any spawn children.
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 logger = logging.getLogger("pixelrag.process_guard")
 
 # ── SHUTDOWN_EVENT ────────────────────────────────────────────────────────────
@@ -64,13 +76,17 @@ def _setup_faulthandler():
         faulthandler.enable(file=crash_file, all_threads=True)
 
         # Try to register additional handlers for SIGSEGV and SIGBUS.
-        # On macOS, these may fail — that's OK, faulthandler.enable() above
-        # already captures crash traces for these signals.
-        for sig in (signal.SIGSEGV, signal.SIGBUS):
-            try:
-                faulthandler.register(sig, file=crash_file, all_threads=True, chain=True)
-            except (OSError, ValueError, RuntimeError):
-                pass  # Signal can't be registered on this platform — enable() covers it
+        # SIGBUS does not exist on Windows; faulthandler.register() is Unix-only.
+        # faulthandler.enable() above already covers crash dumps where supported.
+        if hasattr(faulthandler, "register"):
+            for name in ("SIGSEGV", "SIGBUS"):
+                sig = getattr(signal, name, None)
+                if sig is None:
+                    continue
+                try:
+                    faulthandler.register(sig, file=crash_file, all_threads=True, chain=True)
+                except (OSError, ValueError, RuntimeError, AttributeError):
+                    pass  # Signal can't be registered on this platform — enable() covers it
 
         logger.info(f"[ProcessGuard] Faulthandler enabled → {crash_log}")
     except Exception as e:
