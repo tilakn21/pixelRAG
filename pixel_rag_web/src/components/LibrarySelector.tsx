@@ -3,6 +3,10 @@ import { fetchHealth, setLibraryPath, deleteLibrary } from "@/lib/api";
 import { HealthResponse } from "@/lib/types";
 import { formatLibraryLabel } from "@/lib/display";
 
+function libraryLeaf(path: string): string {
+  return formatLibraryLabel(path).toUpperCase();
+}
+
 export default function LibrarySelector() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -64,7 +68,7 @@ export default function LibrarySelector() {
         style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: "180px", justifyContent: "space-between" }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "160px" }}>
-          {health.library_path.split("/").pop()?.toUpperCase() || "ROOT"}
+          {health.library_path ? libraryLeaf(health.library_path) : "ROOT"}
         </span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
           <path d="m6 9 6 6 6-6" />
@@ -82,7 +86,7 @@ export default function LibrarySelector() {
                 setIsOpen(false);
               }}
             >
-              {lib.split("/").pop()?.toUpperCase() || lib}
+              {libraryLeaf(lib)}
             </button>
           ))}
         </div>

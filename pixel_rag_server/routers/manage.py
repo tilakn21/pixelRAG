@@ -59,18 +59,8 @@ def _paths_for(conn, ids: List[int]) -> dict:
     return out
 
 
-def _move_to_trash(paths: List[str]) -> tuple[int, List[str]]:
-    """
-    Move files to the Trash via Finder.
-
-    Verified to work on this user's exFAT external drive: macOS creates
-    <volume>/.Trashes/<uid>/ and relocates the file there. Note that means the
-    space is reclaimed on the DRIVE's trash, not the Mac's — emptying the Mac
-    Trash will not free it.
-
-    Batched into a single AppleScript call; per-file osascript would be
-    painfully slow for a few hundred photos.
-    """
+def _move_to_trash_macos(paths: List[str]) -> tuple[int, List[str]]:
+    """Move files to the Trash via Finder (AppleScript)."""
     existing = [p for p in paths if Path(p).exists()]
     if not existing:
         return 0, []
@@ -91,6 +81,78 @@ def _move_to_trash(paths: List[str]) -> tuple[int, List[str]]:
         except Exception as e:
             errors.append(f"{type(e).__name__}: {e}")
     return moved, errors
+
+
+def _move_to_trash_windows(paths: List[str]) -> tuple[int, List[str]]:
+    """Move files to the Recycle Bin via SHFileOperationW (allows undo)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", wintypes.UINT),
+            ("pFrom", wintypes.LPCWSTR),
+            ("pTo", wintypes.LPCWSTR),
+            ("fFlags", ctypes.c_ushort),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", wintypes.LPVOID),
+            ("lpszProgressTitle", wintypes.LPCWSTR),
+        ]
+
+    FO_DELETE = 3
+    FOF_ALLOWUNDO = 0x40
+    FOF_NOCONFIRMATION = 0x10
+    FOF_SILENT = 0x04
+    FOF_NOERRORUI = 0x0400
+
+    existing = [str(Path(p)) for p in paths if Path(p).exists()]
+    if not existing:
+        return 0, []
+
+    errors: List[str] = []
+    moved = 0
+    # Double-null-terminated list of paths.
+    from_buf = "\0".join(existing) + "\0\0"
+    op = SHFILEOPSTRUCTW()
+    op.hwnd = None
+    op.wFunc = FO_DELETE
+    op.pFrom = from_buf
+    op.pTo = None
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+    op.fAnyOperationsAborted = False
+    op.hNameMappings = None
+    op.lpszProgressTitle = None
+
+    try:
+        result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+        if result == 0 and not op.fAnyOperationsAborted:
+            moved = sum(1 for p in existing if not Path(p).exists())
+            if moved < len(existing):
+                errors.append("Some files could not be moved to the Recycle Bin")
+        else:
+            errors.append(f"Recycle Bin operation failed (code {result})")
+    except Exception as e:
+        errors.append(f"{type(e).__name__}: {e}")
+    return moved, errors
+
+
+def _move_to_trash(paths: List[str]) -> tuple[int, List[str]]:
+    """
+    Move files to the OS trash / Recycle Bin (recoverable).
+
+    macOS: Finder via AppleScript (works on exFAT volumes via .Trashes).
+    Windows: shell32 SHFileOperationW with FOF_ALLOWUNDO.
+    Other: clear error — callers can use permanent delete instead.
+    """
+    if sys.platform == "darwin":
+        return _move_to_trash_macos(paths)
+    if sys.platform == "win32":
+        return _move_to_trash_windows(paths)
+    return 0, [
+        "Move to Trash is only supported on macOS and Windows. "
+        "Use permanent delete instead."
+    ]
 
 
 def _permanently_delete(paths: List[str]) -> tuple[int, List[str]]:
